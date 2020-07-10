@@ -78,7 +78,8 @@ fun isUseful(
     matrix: Matrix,
     patterns: List<Pattern>,
     withWitness: Boolean,
-    crateRoot: RsMod?
+    crateRoot: RsMod?,
+    isTopLevel: Boolean
 ): Usefulness {
     fun expandConstructors(constructors: List<Constructor>, type: Ty): Usefulness = constructors
         .map { isUsefulSpecialized(matrix, patterns, it, type, withWitness, crateRoot) }
@@ -92,7 +93,7 @@ fun isUseful(
         return Usefulness.Useless
     }
 
-    val type = matrix.firstColumnType
+    val type = matrix.firstColumnType ?: patterns.first().ergonomicType
     val constructors = patterns.first().constructors
     if (constructors != null) {
         return expandConstructors(constructors, type)
@@ -122,9 +123,11 @@ fun isUseful(
         }
     }
     val newPatterns = patterns.subList(1, patterns.size)
-    val res = isUseful(newMatrix, newPatterns, withWitness, crateRoot)
+    val res = isUseful(newMatrix, newPatterns, withWitness, crateRoot, false)
+
     if (res is Usefulness.UsefulWithWitness) {
-        val newWitness = if (isNonExhaustive || usedConstructors.isEmpty()) {
+        val reportConstructors = isTopLevel && !type.isIntegral
+        val newWitness = if (!reportConstructors && (isNonExhaustive || usedConstructors.isEmpty())) {
             res.witnesses.map { witness ->
                 witness.patterns.add(Pattern(type, PatternKind.Wild))
                 witness
@@ -151,7 +154,7 @@ private fun isUsefulSpecialized(
     val newPatterns = specializeRow(patterns, constructor, type) ?: return Usefulness.Useless
     val newMatrix = matrix.mapNotNull { specializeRow(it, constructor, type) }
 
-    return when (val useful = isUseful(newMatrix, newPatterns, withWitness, crateRoot)) {
+    return when (val useful = isUseful(newMatrix, newPatterns, withWitness, crateRoot, false)) {
         is Usefulness.UsefulWithWitness -> Usefulness.UsefulWithWitness(useful.witnesses.map { it.applyConstructor(constructor, type) })
         else -> useful
     }
@@ -195,7 +198,7 @@ private fun specializeRow(row: List<Pattern>, constructor: Constructor, type: Ty
 
 private fun MutableList<Pattern>.fillWithSubPatterns(subPatterns: List<Pattern>) {
     for ((index, pattern) in subPatterns.withIndex()) {
-        while (size <= index) add(Pattern.Wild) // TODO: maybe it's better to throw an exception?
+        while (size <= index) add(Pattern.wild()) // TODO: maybe it's better to throw an exception?
         this[index] = pattern
     }
 }

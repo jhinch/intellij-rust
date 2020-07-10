@@ -12,10 +12,7 @@ import org.rust.lang.core.psi.ext.RsFieldsOwner
 import org.rust.lang.core.psi.ext.findInScope
 import org.rust.lang.core.psi.ext.parentEnum
 import org.rust.lang.core.resolve.VALUES
-import org.rust.lang.core.types.ty.Ty
-import org.rust.lang.core.types.ty.TyAdt
-import org.rust.lang.core.types.ty.TyTuple
-import org.rust.lang.core.types.ty.TyUnknown
+import org.rust.lang.core.types.ty.*
 
 data class Pattern(val ty: Ty, val kind: PatternKind) {
     fun text(ctx: RsElement?): String =
@@ -76,8 +73,27 @@ data class Pattern(val ty: Ty, val kind: PatternKind) {
             is PatternKind.Array -> TODO()
         }
 
+    /**
+     * Returns the type of the pattern suitable for generating constructors
+     *
+     * @returns dereferenced [ty] when [ty] is a reference to enum
+     * @returns [ty] in other cases
+     */
+    val ergonomicType: Ty
+        get() = when (ty) {
+            is TyReference -> {
+                val referenced = ty.referenced
+                if (referenced is TyAdt && referenced.item is RsEnumItem) {
+                    referenced
+                } else {
+                    ty
+                }
+            }
+            else -> ty
+        }
+
     companion object {
-        val Wild: Pattern get() = Pattern(TyUnknown, PatternKind.Wild)
+        fun wild(ty: Ty = TyUnknown): Pattern = Pattern(ty, PatternKind.Wild)
     }
 }
 
