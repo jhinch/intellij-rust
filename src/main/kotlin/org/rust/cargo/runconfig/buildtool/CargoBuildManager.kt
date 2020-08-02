@@ -27,6 +27,7 @@ import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.MessageType
+import com.intellij.openapi.util.SystemInfo
 import com.intellij.openapi.util.text.StringUtil
 import com.intellij.openapi.wm.ToolWindowId
 import com.intellij.openapi.wm.ToolWindowManager
@@ -46,6 +47,7 @@ import org.rust.cargo.runconfig.CargoRunState
 import org.rust.cargo.runconfig.addFormatJsonOption
 import org.rust.cargo.runconfig.command.CargoCommandConfiguration
 import org.rust.cargo.toolchain.CargoCommandLine
+import org.rust.cargo.toolchain.RustChannel
 import org.rust.cargo.util.CargoArgsParser.Companion.parseArgs
 import org.rust.ide.experiments.RsExperiments
 import org.rust.openapiext.isFeatureEnabled
@@ -62,22 +64,21 @@ object CargoBuildManager {
     val CANCELED_BUILD_RESULT: Future<CargoBuildResult> =
         FutureResult(CargoBuildResult(succeeded = false, canceled = true, started = 0))
 
-    private val MIN_RUSTC_VERSION: SemVer = SemVer("1.32.0", 1, 32, 0)
+    private val MIN_SHOW_PROGRESS_VERSION: SemVer = SemVer.parseFromText("1.47.0")!!
 
     val Project.isBuildToolWindowEnabled: Boolean
         get() {
             if (!isFeatureEnabled(RsExperiments.BUILD_TOOL_WINDOW)) return false
-            val rustcVersion = cargoProjects
-                .allProjects
-                .mapNotNull { it.rustcInfo?.version?.semver }
-                .min()
-                ?: return false
-            return rustcVersion >= MIN_RUSTC_VERSION
+            val versions = cargoProjects.allProjects.mapNotNull { it.rustcInfo?.version }
+            if (versions.any { it.channel != RustChannel.NIGHTLY }) return false
+            val minVersion = versions.map { it.semver }.min() ?: return false
+            return minVersion >= MIN_SHOW_PROGRESS_VERSION
         }
 
     fun build(buildConfiguration: CargoBuildConfiguration): Future<CargoBuildResult> {
         val configuration = buildConfiguration.configuration
         val environment = buildConfiguration.environment
+        val project = environment.project
 
         environment.cargoPatches += cargoBuildPatch
         val state = CargoRunState(
@@ -89,7 +90,7 @@ object CargoBuildManager {
         val cargoProject = state.cargoProject ?: return CANCELED_BUILD_RESULT
 
         // Make sure build tool window is initialized:
-        ServiceManager.getService(cargoProject.project, BuildContentManager::class.java)
+        ServiceManager.getService(project, BuildContentManager::class.java)
 
         if (isUnitTestMode) {
             lastBuildCommandLine = state.commandLine
@@ -115,7 +116,7 @@ object CargoBuildManager {
                 buildToolWindow.show(null)
             }
 
-            processHandler = state.startProcess(emulateTerminal = true)
+            processHandler = state.startProcess(useColoredProcessHandler = false, emulateTerminal = true)
             processHandler.addProcessListener(CargoBuildAdapter(this, buildProgressListener))
             processHandler.startNotify()
         }
@@ -280,7 +281,14 @@ object CargoBuildManager {
         val additionalArguments = commandLine.additionalArguments.toMutableList()
         additionalArguments.remove("-q")
         additionalArguments.remove("--quiet")
-        addFormatJsonOption(additionalArguments, "--message-format")
+        addFormatJsonOption(
+            additionalArguments,
+            "--message-format",
+            if (SystemInfo.isUnix) "json-diagnostic-rendered-ansi" else "json"
+        )
+
+        additionalArguments.add("-Zalways-show-progress")
+
         val environmentVariables = EnvironmentVariablesData.create(
             EnvironmentUtil.getEnvironmentMap() +
                 commandLine.environmentVariables.envs - "CI" + ("TERM" to "ansi"),

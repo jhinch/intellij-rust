@@ -656,6 +656,7 @@ class CargoBuildManagerTest : CargoBuildTest() {
             "Building...",
             "Waiting for the current build to finish...",
             "Building... first",
+            "Building... first, second",
             "Building... second"
         )
     }
@@ -756,6 +757,7 @@ class CargoBuildManagerTest : CargoBuildTest() {
             "Building...",
             "Waiting for the current build to finish...",
             "Building... first",
+            "Building... first, second",
             "Building... second"
         )
     }

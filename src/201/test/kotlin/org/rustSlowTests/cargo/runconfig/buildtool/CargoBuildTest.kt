@@ -17,13 +17,13 @@ import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.project.Project
 import com.intellij.pom.Navigatable
 import com.intellij.util.Consumer
-import org.rust.cargo.runconfig.buildtool.CargoBuildEventsConverter.Companion.RUSTC_MESSAGE_GROUP
 import org.rust.cargo.runconfig.buildtool.CargoBuildManager.mockBuildProgressListener
 import org.rust.cargo.runconfig.buildtool.CargoBuildManager.mockProgressIndicator
 import org.rust.cargo.runconfig.buildtool.CargoBuildManager.testBuildId
 import org.rust.cargo.runconfig.buildtool.CargoBuildResult
 import org.rust.cargo.runconfig.buildtool.MockBuildProgressListener
 import org.rust.cargo.runconfig.buildtool.MockProgressIndicator
+import org.rust.cargo.runconfig.buildtool.RsBuildEventsConverter.Companion.RUSTC_MESSAGE_GROUP
 import org.rustSlowTests.cargo.runconfig.RunConfigurationTestBase
 import java.util.function.Supplier
 
@@ -84,8 +84,21 @@ abstract class CargoBuildTest : RunConfigurationTestBase() {
                 // Eliminate consecutive duplicates
                 .fold(emptyList<String>()) { result, value ->
                     if (result.isNotEmpty() && result.last() == value) result else result + value
+                }.toList()
+
+            if (expectedTexts.size != actualTexts.size) {
+                assertEquals(expectedTexts, actualTexts)
+            }
+
+            for ((expected, actual) in expectedTexts.zip(actualTexts)) {
+                if (expected.startsWith("Building...") && actual.startsWith("Building...")) {
+                    val expectedSet = expected.substringAfter("Building... ").split(", ").toSet()
+                    val actualSet = actual.substringAfter("Building... ").split(", ").toSet()
+                    assertEquals(expectedSet, actualSet)
+                } else {
+                    assertEquals(expected, actual)
                 }
-            assertEquals(expectedTexts.toList(), actualTexts)
+            }
         }
 
         protected abstract class MyBuildEvent(

@@ -16,6 +16,7 @@ import com.intellij.openapi.util.UserDataHolderEx
 import com.intellij.openapiext.isUnitTestMode
 import com.intellij.util.concurrency.FutureResult
 import org.rust.cargo.project.model.CargoProject
+import org.rust.cargo.runconfig.RsExecutableRunner.Companion.binaries
 import org.rust.cargo.runconfig.buildtool.CargoBuildManager.showBuildNotification
 import org.rust.cargo.runconfig.command.workingDirectory
 import java.nio.file.Path
@@ -49,6 +50,8 @@ class CargoBuildContext(
     var errors: Int = 0
     var warnings: Int = 0
 
+    val binaries: MutableList<Path> = mutableListOf()
+
     fun waitAndStart(): Boolean {
         indicator.pushState()
         try {
@@ -73,6 +76,8 @@ class CargoBuildContext(
 
     fun finished(isSuccess: Boolean) {
         val isCanceled = indicator.isCanceled
+
+        environment.binaries = binaries.takeIf { isSuccess && !isCanceled }
 
         finished = System.currentTimeMillis()
         buildSemaphore.release()
