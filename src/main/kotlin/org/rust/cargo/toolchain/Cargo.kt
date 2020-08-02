@@ -6,7 +6,6 @@
 package org.rust.cargo.toolchain
 
 import com.google.gson.Gson
-import com.google.gson.JsonParser
 import com.google.gson.JsonSyntaxException
 import com.intellij.execution.ExecutionException
 import com.intellij.execution.configuration.EnvironmentVariablesData
@@ -25,6 +24,7 @@ import com.intellij.openapiext.isDispatchThread
 import com.intellij.util.execution.ParametersListUtil
 import com.intellij.util.net.HttpConfigurable
 import com.intellij.util.text.SemVer
+import com.intellij.webcore.util.JsonUtil.tryParseJsonObject
 import org.jetbrains.annotations.TestOnly
 import org.rust.cargo.CargoConstants.RUST_BACKTRACE_ENV_VAR
 import org.rust.cargo.project.model.cargoProjects
@@ -177,11 +177,7 @@ class Cargo(private val cargoExecutable: Path, private val rustcExecutable: Path
         val messages = mutableMapOf<PackageId, BuildScriptMessage>()
 
         for (line in processOutput.stdoutLines) {
-            val jsonObject = try {
-                JsonParser.parseString(line).asJsonObject
-            } catch (ignore: JsonSyntaxException){
-                continue
-            }
+            val jsonObject = tryParseJsonObject(line) ?: continue
             val message = BuildScriptMessage.fromJson(jsonObject) ?: continue
             messages[message.package_id] = message
         }

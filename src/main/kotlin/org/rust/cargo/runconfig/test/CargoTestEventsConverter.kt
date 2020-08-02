@@ -7,9 +7,6 @@ package org.rust.cargo.runconfig.test
 
 import com.google.gson.Gson
 import com.google.gson.JsonObject
-import com.google.gson.JsonParser
-import com.google.gson.JsonSyntaxException
-import com.google.gson.stream.JsonReader
 import com.intellij.execution.testframework.TestConsoleProperties
 import com.intellij.execution.testframework.sm.ServiceMessageBuilder
 import com.intellij.execution.testframework.sm.runner.OutputToGeneralTestEventsConverter
@@ -18,6 +15,7 @@ import com.intellij.openapi.util.Key
 import com.intellij.openapi.util.text.StringUtil.unescapeStringCharacters
 import com.intellij.openapi.util.text.StringUtil.unquoteString
 import com.intellij.util.execution.ParametersListUtil
+import com.intellij.webcore.util.JsonUtil.tryParseJsonObject
 import jetbrains.buildServer.messages.serviceMessages.ServiceMessageVisitor
 import org.rust.cargo.project.model.cargoProjects
 import org.rust.cargo.project.model.impl.allPackages
@@ -26,7 +24,6 @@ import org.rust.cargo.project.workspace.PackageOrigin
 import org.rust.cargo.runconfig.test.CargoTestEventsConverter.State.*
 import org.rust.stdext.removeLast
 import java.io.File
-import java.io.StringReader
 
 private typealias NodeId = String
 
@@ -50,13 +47,8 @@ class CargoTestEventsConverter(
     override fun processServiceMessages(text: String, outputType: Key<*>, visitor: ServiceMessageVisitor): Boolean {
         handleStartMessage(text)
 
-        val jsonObject = try {
-            val escapedText = text.replace(DOCTEST_PATH_RE) { it.value.replace("\\", "\\\\") }
-            val reader = JsonReader(StringReader(escapedText)).apply { isLenient = true }
-            JsonParser.parseReader(reader).takeIf { it.isJsonObject }?.asJsonObject
-        } catch (e: JsonSyntaxException) {
-            null
-        }
+        val escapedText = text.replace(DOCTEST_PATH_RE) { it.value.replace("\\", "\\\\") }
+        val jsonObject = tryParseJsonObject(escapedText)
 
         return when {
             jsonObject == null -> false

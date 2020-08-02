@@ -5,13 +5,10 @@
 
 package org.rust.ide.annotator
 
-import com.google.gson.JsonParser
-import com.google.gson.stream.JsonReader
 import com.intellij.CommonBundle
 import com.intellij.execution.ExecutionException
 import com.intellij.lang.annotation.AnnotationHolder
 import com.intellij.lang.annotation.HighlightSeverity
-import com.intellij.lang.annotation.ProblemGroup
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.WriteAction
 import com.intellij.openapi.diagnostic.Logger
@@ -32,6 +29,7 @@ import com.intellij.psi.impl.PsiManagerImpl
 import com.intellij.psi.util.PsiModificationTracker
 import com.intellij.util.PathUtil
 import com.intellij.util.messages.MessageBus
+import com.intellij.webcore.util.JsonUtil.tryParseJsonObject
 import org.apache.commons.lang.StringEscapeUtils
 import org.rust.cargo.project.workspace.PackageOrigin
 import org.rust.cargo.toolchain.*
@@ -45,7 +43,6 @@ import org.rust.openapiext.ProjectCache
 import org.rust.openapiext.checkReadAccessAllowed
 import org.rust.openapiext.checkReadAccessNotAllowed
 import org.rust.openapiext.saveAllDocumentsAsTheyAre
-import java.io.StringReader
 import java.nio.file.Path
 import java.util.*
 
@@ -197,10 +194,8 @@ fun AnnotationHolder.createAnnotationsForFile(file: RsFile, annotationResult: Rs
 class RsExternalLinterResult(commandOutput: List<String>) {
     val messages: List<CargoTopMessage> = commandOutput.asSequence()
         .filter { MESSAGE_REGEX.matches(it) }
-        .map { JsonReader(StringReader(it)).apply { isLenient = true } }
-        .map { JsonParser.parseReader(it) }
-        .filter { it.isJsonObject }
-        .mapNotNull { CargoTopMessage.fromJson(it.asJsonObject) }
+        .mapNotNull { tryParseJsonObject(it) }
+        .mapNotNull { CargoTopMessage.fromJson(it) }
         .toList()
 
     companion object {

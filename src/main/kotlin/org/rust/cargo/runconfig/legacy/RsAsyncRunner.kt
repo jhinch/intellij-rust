@@ -5,8 +5,6 @@
 
 package org.rust.cargo.runconfig.legacy
 
-import com.google.gson.JsonParser
-import com.google.gson.JsonSyntaxException
 import com.intellij.execution.DefaultExecutionResult
 import com.intellij.execution.RunContentExecutor
 import com.intellij.execution.configurations.GeneralCommandLine
@@ -26,6 +24,7 @@ import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
+import com.intellij.webcore.util.JsonUtil.tryParseJsonObject
 import org.jetbrains.concurrency.AsyncPromise
 import org.jetbrains.concurrency.Promise
 import org.rust.cargo.runconfig.*
@@ -181,20 +180,9 @@ abstract class RsAsyncRunner(
                                 return
                             }
 
-                            result = output.stdoutLines
-                                .mapNotNull {
-                                    try {
-                                        val jsonElement = JsonParser.parseString(it)
-                                        val jsonObject = if (jsonElement.isJsonObject) {
-                                            jsonElement.asJsonObject
-                                        } else {
-                                            return@mapNotNull null
-                                        }
-                                        CargoMetadata.Artifact.fromJson(jsonObject)
-                                    } catch (e: JsonSyntaxException) {
-                                        null
-                                    }
-                                }
+                            result = output.stdoutLines.asSequence()
+                                .mapNotNull { tryParseJsonObject(it) }
+                                .mapNotNull { CargoMetadata.Artifact.fromJson(it) }
                                 .filter { (target, profile) ->
                                     val isSuitableTarget = when (target.cleanKind) {
                                         CargoMetadata.TargetKind.BIN -> true
@@ -208,8 +196,8 @@ abstract class RsAsyncRunner(
                                     }
                                     isSuitableTarget && (!isTestBuild || profile.test)
                                 }
-                                .flatMap { it.executables }
-                                .let(BuildResult::Binaries)
+                                .flatMap { it.executables.asSequence() }
+                                .let { BuildResult.Binaries(it.toList()) }
                         }
 
                         override fun onSuccess() {
