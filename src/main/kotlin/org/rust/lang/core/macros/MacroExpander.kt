@@ -120,8 +120,22 @@ private class NestingState(
     var atTheEnd: Boolean = false
 )
 
+class RsMacroData(val macroBodyStubbed: RsMacroBody?) {
+    constructor(def: RsMacro): this(def.macroBodyStubbed)
+}
+
+class RsMacroCallData(val macroBody: String?) {
+    constructor(call: RsMacroCall): this(call.macroBody)
+}
+
 class MacroExpander(val project: Project) {
     fun expandMacroAsText(def: RsMacro, call: RsMacroCall): Pair<CharSequence, RangeMap>? {
+        val defData = RsMacroData(def)
+        val callData = RsMacroCallData(call)
+        return expandMacroAsText(defData, callData)
+    }
+
+    fun expandMacroAsText(def: RsMacroData, call: RsMacroCallData): Pair<CharSequence, RangeMap>? {
         val (case, subst, loweringRanges) = findMatchingPattern(def, call) ?: return null
         val macroExpansion = case.macroExpansion?.macroExpansionContents ?: return null
 
@@ -135,8 +149,8 @@ class MacroExpander(val project: Project) {
     }
 
     private fun findMatchingPattern(
-        def: RsMacro,
-        call: RsMacroCall
+        def: RsMacroData,
+        call: RsMacroCallData
     ): Triple<RsMacroCase, MacroSubstitution, RangeMap>? {
         val (macroCallBody, ranges) = project.createAdaptedRustPsiBuilder(call.macroBody ?: return null).lowerDocComments()
         macroCallBody.eof() // skip whitespace

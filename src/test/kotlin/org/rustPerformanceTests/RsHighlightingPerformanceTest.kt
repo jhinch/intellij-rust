@@ -7,16 +7,18 @@ package org.rustPerformanceTests
 
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.RecursionManager
-import com.intellij.psi.PsiDocumentManager
 import com.intellij.psi.util.PsiModificationTracker
+import org.rust.ide.experiments.RsExperiments
+import org.rust.lang.core.crate.crateGraph
 import org.rust.lang.core.macros.MacroExpansionScope
 import org.rust.lang.core.macros.macroExpansionManager
-import org.rust.lang.core.psi.RsFunction
+import org.rust.lang.core.macros.timesBuildDefMaps
 import org.rust.lang.core.psi.ext.RsReferenceElement
-import org.rust.lang.core.psi.ext.block
 import org.rust.lang.core.psi.ext.descendantsOfType
+import org.rust.openapiext.isFeatureEnabled
 import org.rust.stdext.Timings
 import org.rust.stdext.repeatBenchmark
+import kotlin.system.measureTimeMillis
 
 
 class RsHighlightingPerformanceTest : RsRealProjectTestBase() {
@@ -51,6 +53,30 @@ class RsHighlightingPerformanceTest : RsRealProjectTestBase() {
 
         val modificationCount = currentPsiModificationCount()
 
+        // otherwise only profile build
+        val measureBuildAndResolve = false
+        if (isFeatureEnabled(RsExperiments.RESOLVE_NEW)) {
+            if (measureBuildAndResolve) {
+                val time = timesBuildDefMaps.last()
+                timesBuildDefMaps.clear()
+                timings.addMeasure("resolve2", time)
+            } else {
+                for (i in 0..Int.MAX_VALUE) {
+                    val time = measureTimeMillis {
+                        for (crate in project.crateGraph.topSortedCrates) {
+                            crate.updateDefMap()
+                            check(crate.defMap != null)
+                        }
+                    }
+                    println("Iteration #$i - $time milliseconds")
+
+                    // myFixture.editor.caretModel.moveToOffset(myFixture.file.endOffset)
+                    // myFixture.type("pub fn foo$i() {}")
+                    // PsiDocumentManager.getInstance(project).commitAllDocuments() // process PSI modification events
+                }
+            }
+        }
+
         val refs = timings.measure("collecting") {
             myFixture.file.descendantsOfType<RsReferenceElement>()
         }
@@ -70,31 +96,31 @@ class RsHighlightingPerformanceTest : RsRealProjectTestBase() {
             refs.forEach { it.reference?.resolve() }
         }
 
-        myFixture.file.descendantsOfType<RsFunction>()
-            .asSequence()
-            .mapNotNull { it.block?.stmtList?.lastOrNull() }
-            .forEach { stmt ->
-                myFixture.editor.caretModel.moveToOffset(stmt.textOffset)
-                myFixture.type("2+2;")
-                PsiDocumentManager.getInstance(project).commitAllDocuments() // process PSI modification events
-
-                timings.measureAverage("resolve_after_typing") {
-                    refs.forEach { it.reference?.resolve() }
-                }
-            }
-
-        myFixture.file.descendantsOfType<RsFunction>()
-            .asSequence()
-            .mapNotNull { it.block?.stmtList?.lastOrNull() }
-            .forEach { stmt ->
-                myFixture.editor.caretModel.moveToOffset(stmt.textOffset)
-                // replace to `myFixture.type("Hash;")` to make it 10x slower
-                myFixture.type("HashMa;")
-                myFixture.editor.caretModel.moveCaretRelatively(-1, 0, false, false, false)
-                timings.measureAverage("completion") {
-                    myFixture.completeBasic()
-                }
-            }
+        // myFixture.file.descendantsOfType<RsFunction>()
+        //     .asSequence()
+        //     .mapNotNull { it.block?.stmtList?.lastOrNull() }
+        //     .forEach { stmt ->
+        //         myFixture.editor.caretModel.moveToOffset(stmt.textOffset)
+        //         myFixture.type("2+2;")
+        //         PsiDocumentManager.getInstance(project).commitAllDocuments() // process PSI modification events
+        //
+        //         timings.measureAverage("resolve_after_typing") {
+        //             refs.forEach { it.reference?.resolve() }
+        //         }
+        //     }
+        //
+        // myFixture.file.descendantsOfType<RsFunction>()
+        //     .asSequence()
+        //     .mapNotNull { it.block?.stmtList?.lastOrNull() }
+        //     .forEach { stmt ->
+        //         myFixture.editor.caretModel.moveToOffset(stmt.textOffset)
+        //         // replace to `myFixture.type("Hash;")` to make it 10x slower
+        //         myFixture.type("HashMa;")
+        //         myFixture.editor.caretModel.moveCaretRelatively(-1, 0, false, false, false)
+        //         timings.measureAverage("completion") {
+        //             myFixture.completeBasic()
+        //         }
+        //     }
 
         return timings
     }
@@ -115,4 +141,3 @@ class RsHighlightingPerformanceTest : RsRealProjectTestBase() {
         Disposer.dispose(lastDisposable)
     }
 }
-

@@ -6,14 +6,21 @@
 package org.rust.lang.core.crate.impl
 
 import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.psi.util.CachedValueProvider
 import org.rust.cargo.CfgOptions
 import org.rust.cargo.project.model.CargoProject
 import org.rust.cargo.project.workspace.CargoWorkspace
 import org.rust.cargo.project.workspace.PackageOrigin
 import org.rust.lang.core.crate.Crate
 import org.rust.lang.core.crate.CratePersistentId
+import org.rust.lang.core.crate.crateGraph
+import org.rust.lang.core.macros.macroExpansionManager
 import org.rust.lang.core.psi.RsFile
 import org.rust.lang.core.psi.rustFile
+import org.rust.lang.core.psi.rustStructureModificationTracker
+import org.rust.lang.core.resolve2.CrateDefMap
+import org.rust.lang.core.resolve2.buildCrateDefMap
+import org.rust.openapiext.CachedValueDelegate
 import org.rust.openapiext.fileId
 import org.rust.openapiext.toPsiFile
 import java.util.*
@@ -57,6 +64,48 @@ class CargoBasedCrate(
     override val areDoctestsEnabled: Boolean get() = cargoTarget.doctest && cargoTarget.isDoctestable
     override val presentableName: String get() = cargoTarget.name
     override val normName: String get() = cargoTarget.normName
+
+    override val defMap: CrateDefMap?
+        get() {
+            val isMacroExpansionEnabled = cargoProject.project.macroExpansionManager.isMacroExpansionEnabled
+            return if (isMacroExpansionEnabled) {
+                val crateGraphService = cargoProject.project.crateGraph as CrateGraphServiceImpl  // todo
+                val id = id ?: return null
+                check(id in crateGraphService.crateDefMaps) { "DefMap for crate $this is not yet computed" }
+                return crateGraphService.crateDefMaps[id]
+            } else {
+                defMapLazy
+            }
+        }
+
+    // non-lazy - if macro expansion is enabled
+    @Volatile
+    private var isComputingDefMap: Boolean = false
+    override fun updateDefMap() {
+        check(!isComputingDefMap) { "Attempt to compute defMap for $this while it is being computed" }
+        isComputingDefMap = true
+        try {
+            val crateGraphService = cargoProject.project.crateGraph as CrateGraphServiceImpl
+            val crateId = id ?: return
+            val defMap = buildCrateDefMap(this)
+            crateGraphService.crateDefMaps[crateId] = defMap
+        } finally {
+            isComputingDefMap = false
+        }
+    }
+
+    // lazy - if macro expansion is disabled
+    private val defMapLazy: CrateDefMap? by CachedValueDelegate {
+        check(!isComputingDefMap) { "Attempt to compute defMap for $this while it is being computed" }
+        isComputingDefMap = true
+        val result = try {
+            buildCrateDefMap(this)
+        } finally {
+            isComputingDefMap = false
+        }
+        // todo use tracker for changes only in this crate
+        CachedValueProvider.Result(result, cargoProject.project.rustStructureModificationTracker)
+    }
 
     override fun toString(): String = "${cargoTarget.name}(${kind.name})"
 }

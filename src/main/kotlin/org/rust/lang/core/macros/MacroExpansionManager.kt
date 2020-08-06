@@ -74,6 +74,7 @@ interface MacroExpansionManager {
     fun reexpand()
 
     val macroExpansionMode: MacroExpansionMode
+    val isMacroExpansionEnabled: Boolean
 
     var expansionState: ExpansionState?
 
@@ -244,6 +245,8 @@ class MacroExpansionManagerImpl(
 
     override val macroExpansionMode: MacroExpansionMode
         get() = inner?.expansionMode ?: MacroExpansionMode.OLD
+    override val isMacroExpansionEnabled: Boolean
+        get() = inner?.isMacroExpansionEnabled ?: false
 
     override var expansionState: MacroExpansionManager.ExpansionState?
         get() = inner?.expansionState
@@ -814,6 +817,12 @@ private class MacroExpansionServiceImplInner(
             } else {
                 project.rustSettings.macroExpansionEngine.toMode()
             }
+        }
+    val isMacroExpansionEnabled: Boolean
+        get() = when (val expansionMode = expansionMode) {
+            MacroExpansionMode.Disabled -> false
+            MacroExpansionMode.Old -> true
+            is MacroExpansionMode.New -> expansionMode.scope !== MacroExpansionScope.NONE
         }
 
     val isExpansionModeNew: Boolean

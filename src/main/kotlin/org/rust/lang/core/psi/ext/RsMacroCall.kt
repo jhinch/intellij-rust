@@ -81,7 +81,7 @@ private val MACRO_ARGUMENT_TYPES: TokenSet = tokenSetOf(
 val RsMacroCall.macroArgumentElement: RsElement?
     get() = node.findChildByType(MACRO_ARGUMENT_TYPES)?.psi as? RsElement
 
-private val RsExpr.value: String? get() {
+val RsExpr.value: String? get() {
     return when (this) {
         is RsLitExpr -> stringValue
         is RsMacroExpr -> {

@@ -5,8 +5,10 @@
 
 package org.rust.lang.core.macros
 
+import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer
 import com.intellij.openapi.application.AccessToken
 import com.intellij.openapi.application.WriteAction
+import com.intellij.openapi.application.runReadAction
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.progress.EmptyProgressIndicator
 import com.intellij.openapi.progress.ProcessCanceledException
@@ -24,12 +26,15 @@ import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.util.containers.ContainerUtil
 import com.intellij.util.io.storage.HeavyProcessLatch
 import org.rust.RsTask
+import org.rust.lang.core.crate.Crate
+import org.rust.lang.core.crate.crateGraph
 import org.rust.lang.core.psi.RsMacroCall
 import org.rust.lang.core.psi.RsMembers
 import org.rust.lang.core.psi.ext.RsMod
 import org.rust.lang.core.psi.ext.bodyHash
 import org.rust.lang.core.psi.ext.macroBody
 import org.rust.lang.core.psi.ext.resolveToMacro
+import org.rust.lang.core.psi.rustPsiManager
 import org.rust.lang.core.resolve.DEFAULT_RECURSION_LIMIT
 import org.rust.lang.core.resolve.ref.RsMacroPathReferenceImpl
 import org.rust.lang.core.resolve.ref.RsResolveCache
@@ -44,6 +49,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.max
 import kotlin.streams.toList
 import kotlin.system.measureNanoTime
+import kotlin.system.measureTimeMillis
 
 abstract class MacroExpansionTaskBase(
     project: Project,
@@ -77,6 +83,8 @@ abstract class MacroExpansionTaskBase(
         indicator.checkCanceled()
         indicator.isIndeterminate = false
         realTaskIndicator = indicator
+
+        runNameResolution()
 
         expansionSteps = getMacrosToExpand(dumbService).iterator()
 
@@ -134,6 +142,35 @@ abstract class MacroExpansionTaskBase(
                 WriteAction.runAndWait<Throwable> {  }
             }
         }
+    }
+
+    private fun runNameResolution() {
+        val topSortedCrates = runReadAction { project.crateGraph.topSortedCrates }
+        for (crate in topSortedCrates) {
+            crate.resetDefMap()
+        }
+        val time = measureTimeMillis {
+            val async = true
+            if (async) {
+                val futures = hashMapOf<Crate, CompletableFuture<Void>>()
+                for (crate in topSortedCrates) {
+                    val dependenciesFutures = crate.dependencies.map { futures[it.crate]!! }
+                    val crateFuture = CompletableFuture.allOf(*dependenciesFutures.toTypedArray())
+                        .thenRun { crate.updateDefMap() }
+                    futures[crate] = crateFuture
+                }
+                futures.values.forEach { it.join() }
+            } else {
+                for (crate in topSortedCrates) {
+                    crate.updateDefMap()
+                }
+            }
+        }
+        timesBuildDefMaps += time
+        MACRO_LOG.debug("Created DefMap for all crates in $time milliseconds")
+
+        project.rustPsiManager.incRustStructureModificationCount()
+        DaemonCodeAnalyzer.getInstance(project).restart()
     }
 
     private fun calcProgress(step: Int, progress: Double): Double =
@@ -527,3 +564,6 @@ private class CorruptedExpansionStorageException: RuntimeException {
 
 val RsMacroCall.isTopLevelExpansion: Boolean
     get() = parent is RsMod || parent is RsMembers
+
+// todo remove
+val timesBuildDefMaps: MutableList<Long> = mutableListOf()

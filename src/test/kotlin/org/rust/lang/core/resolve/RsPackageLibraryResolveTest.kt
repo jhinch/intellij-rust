@@ -5,6 +5,7 @@
 
 package org.rust.lang.core.resolve
 
+import org.junit.Ignore
 import org.rust.MockEdition
 import org.rust.ProjectDescriptor
 import org.rust.WithDependencyRustProjectDescriptor
@@ -51,6 +52,7 @@ class RsPackageLibraryResolveTest : RsResolveTestBase() {
         macro_rules! foo_bar { () => {} }
     """)
 
+    @Ignore  // todo multiresolve
     fun `test duplicated macro_export macro`() = stubOnlyResolve("""
     //- main.rs
         #[macro_use]
@@ -90,7 +92,7 @@ class RsPackageLibraryResolveTest : RsResolveTestBase() {
     //- lib.rs
         #[macro_export]
         macro_rules! foo_bar { () => {} }
-    """, NameResolutionTestmarks.missingMacroUse)
+    """)
 
     fun `test macro rules in mod 1`() = stubOnlyResolve("""
     //- main.rs
@@ -217,7 +219,7 @@ class RsPackageLibraryResolveTest : RsResolveTestBase() {
         macro_rules! foo {
             () => {};
         }
-    """, NameResolutionTestmarks.missingMacroUse)
+    """)
 
     fun `test import macro by use item wildcard`() = stubOnlyResolve("""
     //- lib.rs
@@ -231,7 +233,7 @@ class RsPackageLibraryResolveTest : RsResolveTestBase() {
         macro_rules! foo {
             () => {};
         }
-    """, NameResolutionTestmarks.missingMacroUse)
+    """)
 
     fun `test import macro by use item without extern crate`() = stubOnlyResolve("""
     //- lib.rs
@@ -617,6 +619,7 @@ class RsPackageLibraryResolveTest : RsResolveTestBase() {
         }
     """)
 
+    @Ignore  // todo multiresolve
     @MockEdition(CargoWorkspace.Edition.EDITION_2018)
     fun `test ambiguity of extern crate alias and other item with the same name`() {
         stubOnlyResolve("""
@@ -658,7 +661,7 @@ class RsPackageLibraryResolveTest : RsResolveTestBase() {
         use dep_lib_target;
         use dep_lib_target::Foo;
                           //^ dep-lib/lib.rs
-    """, ItemResolutionTestmarks.extraAtomUse)
+    """)
 
     @MockEdition(CargoWorkspace.Edition.EDITION_2018)
     fun `test "extra use of crate name 1" with alias`() = stubOnlyResolve("""
@@ -678,7 +681,7 @@ class RsPackageLibraryResolveTest : RsResolveTestBase() {
         use dep_lib_target::{self};
         use dep_lib_target::Foo;
                           //^ dep-lib/lib.rs
-    """, ItemResolutionTestmarks.extraAtomUse)
+    """)
 
     @MockEdition(CargoWorkspace.Edition.EDITION_2018)
     fun `test import the same name as a crate name`() = stubOnlyResolve("""
@@ -748,5 +751,18 @@ class RsPackageLibraryResolveTest : RsResolveTestBase() {
 
         type T = Foo;
                //^ trans-lib/lib.rs
+    """)
+
+    fun `test extern crate double renaming`() = stubOnlyResolve("""
+    //- dep-lib/lib.rs
+        pub fn func() {}
+    //- lib.rs
+        extern crate dep_lib_target as foo1;
+        extern crate foo1 as foo2;
+
+        fn main() {
+            foo2::func();
+                 //^ unresolved
+        }
     """)
 }
