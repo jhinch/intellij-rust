@@ -753,6 +753,7 @@ class RsPackageLibraryResolveTest : RsResolveTestBase() {
                //^ trans-lib/lib.rs
     """)
 
+    @MockEdition(CargoWorkspace.Edition.EDITION_2018)
     fun `test extern crate double renaming`() = stubOnlyResolve("""
     //- dep-lib/lib.rs
         pub fn func() {}

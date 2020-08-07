@@ -79,9 +79,9 @@ fun buildCrateDefMapContainingExplicitItems(
     }
     collector.collectElements(crateRoot)
 
+    removeInvalidImportsAndMacroCalls(defMap, crateInfo)
     crateInfo.imports  // imports from nested modules first
         .sortByDescending { import -> import.usePath.split("::").size }
-    // todo выпилить defMap, раз теперь она есть в crateInfo
     return Pair(defMap, crateInfo)
 }
 
@@ -92,6 +92,20 @@ private fun getInitialExternPrelude(crate: Crate): MutableMap<String, ModData> {
             it.normName to defMap.root
         }
         .toMap(hashMapOf())
+}
+
+/**
+ * "Invalid" means it belongs to [ModData] which is no longer accessible from [defMap.root] using [ModData.childModules]
+ * It could happen if there is cfg-disabled module, which we collect first (with its imports)
+ * And then cfg-enabled module overrides previously created [ModData]
+ */
+fun removeInvalidImportsAndMacroCalls(defMap: CrateDefMap, crateInfo: CrateInfo) {
+    fun ModData.descendantsMods(): Sequence<ModData> =
+        sequenceOf(this) + childModules.values.asSequence().flatMap { it.descendantsMods() }
+
+    val allMods = defMap.root.descendantsMods().toSet()
+    crateInfo.imports.removeIf { it.containingMod !in allMods }
+    crateInfo.macroCalls.removeIf { it.containingMod !in allMods }
 }
 
 class ModCollector(
@@ -223,7 +237,7 @@ class ModCollector(
             else -> return null
         }
         val childModData = collectChildModule(childMod, item.name ?: return null)
-        // don't use `childMod.isEnabledByCfg`, because `isEnabledByCfg` doesn't work for `RsFile`
+        // Note: don't use `childMod.isEnabledByCfg`, because `isEnabledByCfg` doesn't work for `RsFile`
         if (hasMacroUse && item.isEnabledByCfg) modData.legacyMacros += childModData.legacyMacros
         return childModData
     }
@@ -282,18 +296,16 @@ class ModCollector(
     }
 
     private fun collectMacro(macro: RsMacro) {
+        if (!macro.isEnabledByCfg) return  // todo ?
         val name = macro.name ?: return
         // check(macro.stub != null)  // todo
         val macroBodyStubbed = macro.macroBodyStubbed ?: return
         val macroPath = modData.path.append(name)
-        val isEnabledByCfg = macro.isEnabledByCfg
-        if (isEnabledByCfg) {
-            modData.legacyMacros[name] = MacroInfo(modData.crate, macroPath, macroBodyStubbed)
-        }
+
+        modData.legacyMacros[name] = MacroInfo(modData.crate, macroPath, macroBodyStubbed)
 
         if (macro.hasMacroExport) {
-            val visibility = if (isEnabledByCfg) Visibility.Public else Visibility.CfgDisabled
-            val visItem = VisItem(macroPath, visibility)
+            val visItem = VisItem(macroPath, Visibility.Public)
             val perNs = PerNs(macros = visItem)
             onAddItem(crateRoot, name, perNs)
         }

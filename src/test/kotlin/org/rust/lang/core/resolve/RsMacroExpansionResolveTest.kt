@@ -6,8 +6,10 @@
 package org.rust.lang.core.resolve
 
 import org.rust.ExpandMacros
+import org.rust.MockEdition
 import org.rust.ProjectDescriptor
 import org.rust.WithDependencyRustProjectDescriptor
+import org.rust.cargo.project.workspace.CargoWorkspace
 import org.rust.stdext.BothEditions
 
 @ExpandMacros
@@ -625,6 +627,7 @@ class RsMacroExpansionResolveTest : RsResolveTestBase() {
                  //^ main.rs
     """)
 
+    @MockEdition(CargoWorkspace.Edition.EDITION_2018)
     fun `test mod with path attribute declared with macro`() = stubOnlyResolve("""
     //- main.rs
         macro_rules! foo {

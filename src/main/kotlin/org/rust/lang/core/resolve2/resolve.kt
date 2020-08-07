@@ -70,8 +70,8 @@ class CrateDefMap(
 
     // todo - создать ещё одну Map вроде legacyMacros, в которой будут записаны только явно объявленные макросы?
     fun getMacroInfo(macroDef: VisItem): MacroInfo {
-        val containingModData = getModData(macroDef.containingMod)!!
-        return containingModData.legacyMacros[macroDef.name]!!
+        val containingMod = getModData(macroDef.containingMod)!!
+        return containingMod.legacyMacros[macroDef.name]!!
     }
 
     /**
