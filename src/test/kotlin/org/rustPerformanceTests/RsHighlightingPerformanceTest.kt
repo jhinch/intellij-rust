@@ -9,16 +9,16 @@ import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.RecursionManager
 import com.intellij.psi.util.PsiModificationTracker
 import org.rust.ide.experiments.RsExperiments
-import org.rust.lang.core.crate.crateGraph
 import org.rust.lang.core.macros.MacroExpansionScope
 import org.rust.lang.core.macros.macroExpansionManager
-import org.rust.lang.core.macros.timesBuildDefMaps
 import org.rust.lang.core.psi.ext.RsReferenceElement
 import org.rust.lang.core.psi.ext.descendantsOfType
+import org.rust.lang.core.resolve2.buildCrateDefMapForAllCrates
+import org.rust.lang.core.resolve2.timesBuildDefMaps
 import org.rust.openapiext.isFeatureEnabled
 import org.rust.stdext.Timings
 import org.rust.stdext.repeatBenchmark
-import kotlin.system.measureTimeMillis
+import java.util.concurrent.Executors
 
 
 class RsHighlightingPerformanceTest : RsRealProjectTestBase() {
@@ -54,7 +54,7 @@ class RsHighlightingPerformanceTest : RsRealProjectTestBase() {
         val modificationCount = currentPsiModificationCount()
 
         // otherwise only profile build
-        val measureBuildAndResolve = false
+        val measureBuildAndResolve = true
         if (isFeatureEnabled(RsExperiments.RESOLVE_NEW)) {
             if (measureBuildAndResolve) {
                 val time = timesBuildDefMaps.last()
@@ -62,13 +62,12 @@ class RsHighlightingPerformanceTest : RsRealProjectTestBase() {
                 timings.addMeasure("resolve2", time)
             } else {
                 for (i in 0..Int.MAX_VALUE) {
-                    val time = measureTimeMillis {
-                        for (crate in project.crateGraph.topSortedCrates) {
-                            crate.updateDefMap()
-                            check(crate.defMap != null)
-                        }
-                    }
-                    println("Iteration #$i - $time milliseconds")
+                    val pool = Executors.newWorkStealingPool()
+                    buildCrateDefMapForAllCrates(project, pool, async = false)
+
+                    // val time = timesBuildDefMaps.last()
+                    // timesBuildDefMaps.clear()
+                    // println("Iteration #$i - $time milliseconds")
 
                     // myFixture.editor.caretModel.moveToOffset(myFixture.file.endOffset)
                     // myFixture.type("pub fn foo$i() {}")
