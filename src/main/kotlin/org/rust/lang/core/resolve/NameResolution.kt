@@ -48,6 +48,7 @@ import org.rust.lang.core.resolve.NameResolutionTestmarks.selfInGroup
 import org.rust.lang.core.resolve.indexes.RsLangItemIndex
 import org.rust.lang.core.resolve.indexes.RsMacroIndex
 import org.rust.lang.core.resolve.ref.*
+import org.rust.lang.core.resolve2.IS_NEW_RESOLVE_ENABLED
 import org.rust.lang.core.resolve2.processMacros
 import org.rust.lang.core.stubs.index.RsNamedElementIndex
 import org.rust.lang.core.types.*
@@ -851,7 +852,7 @@ private class MacroResolver private constructor(private val processor: RsResolve
         if (result == true) return true
 
         // `startElement.parent is RsMod` => use `CrateDefMap` if new resolve is enabled
-        if (isFeatureEnabled(RsExperiments.RESOLVE_NEW)) {
+        if (IS_NEW_RESOLVE_ENABLED) {
             check(result == null) { "we must encounter RsMod while processing scopes upward" }
             return false
         }
@@ -895,7 +896,7 @@ private class MacroResolver private constructor(private val processor: RsResolve
         if (expandedFrom != null && processExpandedFrom(expandedFrom)) return true
         val context = expandedFrom ?: element.context ?: return false
 
-        if (isFeatureEnabled(RsExperiments.RESOLVE_NEW) && context is RsMod) {
+        if (IS_NEW_RESOLVE_ENABLED && context is RsMod) {
             processRemainedExportedMacros()  // process local imports
             return if (processMacros(context, processor)) true else null
         }
@@ -923,7 +924,7 @@ private class MacroResolver private constructor(private val processor: RsResolve
         if (expandedFrom != null && processExpandedFrom(expandedFrom)) return true
         val parentPsi = expandedFrom ?: parentStub.psi
 
-        if (isFeatureEnabled(RsExperiments.RESOLVE_NEW) && parentPsi is RsMod) {
+        if (IS_NEW_RESOLVE_ENABLED && parentPsi is RsMod) {
             processRemainedExportedMacros()  // process local imports
             return if (processMacros(parentPsi, processor)) true else null
         }

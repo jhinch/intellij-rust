@@ -13,14 +13,13 @@ import com.intellij.psi.PsiElement
 import com.intellij.psi.util.CachedValue
 import org.rust.cargo.util.AutoInjectedCrates.CORE
 import org.rust.cargo.util.AutoInjectedCrates.STD
-import org.rust.ide.experiments.RsExperiments
 import org.rust.lang.core.crate.impl.DoctestCrate
 import org.rust.lang.core.psi.*
 import org.rust.lang.core.psi.ext.*
 import org.rust.lang.core.resolve.ref.RsReference
 import org.rust.lang.core.resolve.ref.advancedDeepResolve
+import org.rust.lang.core.resolve2.IS_NEW_RESOLVE_ENABLED
 import org.rust.lang.core.resolve2.processItemDeclarations2
-import org.rust.openapiext.isFeatureEnabled
 import org.rust.openapiext.recursionGuard
 import org.rust.stdext.intersects
 import java.util.*
@@ -69,7 +68,7 @@ fun processItemDeclarations(
     originalProcessor: RsResolveProcessor,
     ipm: ItemProcessingMode
 ): Boolean {
-    if (scope is RsMod && isFeatureEnabled(RsExperiments.RESOLVE_NEW) && scope.containingCrate !is DoctestCrate) {
+    if (scope is RsMod && IS_NEW_RESOLVE_ENABLED && scope.containingCrate !is DoctestCrate) {
         return processItemDeclarations2(scope, ns, originalProcessor, ipm)
     }
 

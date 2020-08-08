@@ -24,6 +24,7 @@ import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.util.containers.ContainerUtil
 import com.intellij.util.io.storage.HeavyProcessLatch
 import org.rust.RsTask
+import org.rust.ide.experiments.RsExperiments
 import org.rust.lang.core.psi.RsMacroCall
 import org.rust.lang.core.psi.RsMembers
 import org.rust.lang.core.psi.ext.RsMod
@@ -33,6 +34,7 @@ import org.rust.lang.core.psi.ext.resolveToMacro
 import org.rust.lang.core.resolve.DEFAULT_RECURSION_LIMIT
 import org.rust.lang.core.resolve.ref.RsMacroPathReferenceImpl
 import org.rust.lang.core.resolve.ref.RsResolveCache
+import org.rust.lang.core.resolve2.IS_NEW_RESOLVE_ENABLED
 import org.rust.lang.core.resolve2.buildCrateDefMapForAllCrates
 import org.rust.openapiext.*
 import org.rust.stdext.HashCode
@@ -79,7 +81,9 @@ abstract class MacroExpansionTaskBase(
         indicator.isIndeterminate = false
         realTaskIndicator = indicator
 
-        buildCrateDefMapForAllCrates(project, pool)
+        if (IS_NEW_RESOLVE_ENABLED) {
+            buildCrateDefMapForAllCrates(project, pool)
+        }
 
         expansionSteps = getMacrosToExpand(dumbService).iterator()
 

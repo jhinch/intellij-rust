@@ -19,10 +19,13 @@ import org.rust.lang.core.resolve.*
 import org.rust.lang.core.resolve.ItemProcessingMode.WITHOUT_PRIVATE_IMPORTS
 import org.rust.lang.core.resolve2.Visibility.CfgDisabled
 import org.rust.openapiext.toPsiFile
-import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executor
 import kotlin.system.measureTimeMillis
+
+val IS_NEW_RESOLVE_ENABLED: Boolean = true
+// val IS_NEW_RESOLVE_ENABLED: Boolean = isFeatureEnabled(RsExperiments.RESOLVE_NEW)
 
 fun buildCrateDefMapForAllCrates(project: Project, pool: Executor, async: Boolean = true) {
     val topSortedCrates = runReadAction { project.crateGraph.topSortedCrates }
@@ -56,13 +59,10 @@ private class AsyncCrateDefMapBuilder(
     private val remainingDependenciesCounts: MutableMap<Crate, Int> = topSortedCrates
         .associateWith { it.dependencies.size }
         .toMutableMap()
-    private val completableFuture: CompletableFuture<Unit> = CompletableFuture()
+    private val remainingNumberCrates: CountDownLatch = CountDownLatch(topSortedCrates.size)
 
     // for profiling
     private val tasksTimes: MutableMap<Crate, Long> = ConcurrentHashMap()
-
-    @Volatile
-    private var remainingNumberCrates: Int = topSortedCrates.size
 
     fun build() {
         val wallTime = measureTimeMillis {
@@ -84,7 +84,7 @@ private class AsyncCrateDefMapBuilder(
             .filterValues { it == 0 }
             .keys
             .forEach { buildCrateDefMapAsync(it) }
-        completableFuture.join()
+        remainingNumberCrates.await()
     }
 
     private fun buildCrateDefMapAsync(crate: Crate) {
@@ -107,10 +107,7 @@ private class AsyncCrateDefMapBuilder(
     @Synchronized
     private fun onCrateFinished(crate: Crate) {
         crate.reverseDependencies.forEach { onDependencyCrateFinished(it) }
-        remainingNumberCrates -= 1
-        if (remainingNumberCrates == 0) {
-            completableFuture.complete(Unit)
-        }
+        remainingNumberCrates.countDown()
     }
 
     private fun onDependencyCrateFinished(crate: Crate) {
@@ -157,16 +154,26 @@ fun processItemDeclarations2(
     val crate = scope.containingCrate ?: return false
     check(crate !is DoctestCrate) { "doc test crates are not supported by CrateDefMap" }
     val defMap = crate.defMap ?: error("defMap is null for $crate during resolve")
+    // todo optimization: добавить в CrateDefMap мапку из fileId в ModData
     val modData = defMap.getModData(scope) ?: return false
 
-    // todo optimization: попробовать избавиться от цикла и передавать name как параметр
-    val namesInTypesNamespace = hashSetOf<String>()
-    for ((name, perNs) in modData.visibleItems) {
-        /* todo inline */ fun VisItem.tryConvertToPsi(namespace: Namespace): RsNamedElement? {
+    modData.visibleItems.processEntriesWithName(processor.name) { name, perNs ->
+        fun /* todo inline */ VisItem.tryConvertToPsi(namespace: Namespace): RsNamedElement? {
             if (namespace !in ns) return null
             if (visibility.isInvisible && ipm === WITHOUT_PRIVATE_IMPORTS) return null
-            return toPsi(defMap.defDatabase, project, namespace)
-                ?.takeIf { it.isEnabledByCfg || visibility === CfgDisabled }
+
+            val item = toPsi(defMap.defDatabase, project, namespace) ?: return null
+
+            if ((visibility === CfgDisabled) != !item.isEnabledByCfg) return null
+
+            val itemNamespaces = item.namespaces
+            if (itemNamespaces == TYPES_N_VALUES) {
+                // We will provide `item` only in [Namespace.Types]
+                if (Namespace.Types in ns && namespace == Namespace.Values) return null
+            } else {
+                check(itemNamespaces.size == 1)
+            }
+            return item
         }
 
         // todo refactor ?
@@ -177,54 +184,64 @@ fun processItemDeclarations2(
         // we need setOf here because item could belong to multiple namespaces (e.g. unit struct)
         for (element in setOf(types, values, macros)) {
             if (element == null) continue
-            val entry = SimpleScopeEntry(name, element)
-            processor(entry) && return true
+            processor(name, element) && return@processEntriesWithName true
         }
-
-        if (types != null) namesInTypesNamespace += name
-    }
+        false
+    } && return true
 
     // todo не обрабатывать отдельно, а использовать `getVisibleItems` ?
+    // todo only if `processor.name == null` ?
     if (Namespace.Types in ns) {
         for ((traitPath, traitVisibility) in modData.unnamedTraitImports) {
             val trait = VisItem(traitPath, traitVisibility)
             val traitPsi = trait.toPsi(defMap.defDatabase, project, Namespace.Types) ?: continue
-            val entry = SimpleScopeEntry("_", traitPsi)
-            processor(entry) && return true
+            processor("_", traitPsi) && return true
         }
     }
 
     if (ipm.withExternCrates && Namespace.Types in ns) {
-        for ((name, externCrateModData) in defMap.externPrelude) {
-            if (name in namesInTypesNamespace) continue
+        defMap.externPrelude.processEntriesWithName(processor.name) { name, externCrateModData ->
+            if (modData.visibleItems[name]?.types != null) return@processEntriesWithName false
             val externCratePsi = externCrateModData.asVisItem().toPsi(defMap.defDatabase, project, Namespace.Types)!!  // todo
-            val entry = SimpleScopeEntry(name, externCratePsi)
-            processor(entry) && return true
-        }
+            processor(name, externCratePsi)
+        } && return true
     }
 
     return false
 }
 
-fun processMacros(scope: RsMod, processor: (ScopeEntry) -> Boolean): Boolean {
+fun processMacros(scope: RsMod, processor: RsResolveProcessor): Boolean {
     val project = scope.project
     val crate = scope.containingCrate ?: return false
     val defMap = crate.defMap ?: error("defMap is null for $crate during macro resolve")
     val modData = defMap.getModData(scope) ?: return false
 
-    for ((name, macroInfo) in modData.legacyMacros) {
+    modData.legacyMacros.processEntriesWithName(processor.name) { name, macroInfo ->
         val visItem = VisItem(macroInfo.path, Visibility.Public)
-        val macros = visItem.toPsi(defMap.defDatabase, project, Namespace.Macros) ?: continue
-        val entry = SimpleScopeEntry(name, macros)
-        processor(entry) && return true
-    }
+        val macros = visItem.toPsi(defMap.defDatabase, project, Namespace.Macros)
+            ?: return@processEntriesWithName false
+        processor(name, macros)
+    } && return true
 
-    for ((name, perNs) in modData.visibleItems) {
-        val macros = perNs.macros?.toPsi(defMap.defDatabase, project, Namespace.Macros) ?: continue
-        val entry = SimpleScopeEntry(name, macros)
-        processor(entry) && return true
-    }
+    modData.visibleItems.processEntriesWithName(processor.name) { name, perNs ->
+        val macros = perNs.macros?.toPsi(defMap.defDatabase, project, Namespace.Macros)
+            ?: return@processEntriesWithName false
+        processor(name, macros)
+    } && return true
     return false
+}
+
+// todo make inline? (станет удобнее делать `&& return true`)
+private fun <T> Map<String, T>.processEntriesWithName(name: String?, f: (String, T) -> Boolean): Boolean {
+    if (name == null) {
+        for ((key, value) in this) {
+            f(key, value) && return true
+        }
+        return false
+    } else {
+        val value = this[name] ?: return false
+        return f(name, value)
+    }
 }
 
 private fun VisItem.toPsi(defDatabase: DefDatabase, project: Project, ns: Namespace): RsNamedElement? {

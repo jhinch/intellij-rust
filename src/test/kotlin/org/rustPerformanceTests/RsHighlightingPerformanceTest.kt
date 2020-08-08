@@ -8,37 +8,45 @@ package org.rustPerformanceTests
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.RecursionManager
 import com.intellij.psi.util.PsiModificationTracker
-import org.rust.ide.experiments.RsExperiments
 import org.rust.lang.core.macros.MacroExpansionScope
 import org.rust.lang.core.macros.macroExpansionManager
 import org.rust.lang.core.psi.ext.RsReferenceElement
 import org.rust.lang.core.psi.ext.descendantsOfType
+import org.rust.lang.core.psi.rustPsiManager
+import org.rust.lang.core.resolve2.IS_NEW_RESOLVE_ENABLED
 import org.rust.lang.core.resolve2.buildCrateDefMapForAllCrates
 import org.rust.lang.core.resolve2.timesBuildDefMaps
-import org.rust.openapiext.isFeatureEnabled
 import org.rust.stdext.Timings
 import org.rust.stdext.repeatBenchmark
 import java.util.concurrent.Executors
+import kotlin.math.min
+import kotlin.system.measureTimeMillis
 
-
+// todo другое имя ?
 class RsHighlightingPerformanceTest : RsRealProjectTestBase() {
     // It is a performance test, but we don't want to waste time
     // measuring CPU performance
     override fun isPerformanceTest(): Boolean = false
 
-    fun `test highlighting Cargo`() =
-        repeatTest { highlightProjectFile(CARGO, "src/cargo/core/resolver/mod.rs", it) }
+    private val cargoFilePath: String = "src/cargo/core/resolver/mod.rs"
+    fun `test Cargo, measure`() = repeatTest(CARGO, cargoFilePath, ::measureResolveAndHighlight)
+    fun `test Cargo, profile DefMap`() = repeatTest(CARGO, cargoFilePath, ::profileBuildDefMaps)
+    fun `test Cargo, profile resolve`() = repeatTest(CARGO, cargoFilePath, ::profileResolve)
 
-    fun `test highlighting mysql_async`() =
-        repeatTest { highlightProjectFile(MYSQL_ASYNC, "src/conn/mod.rs", it) }
+    private val mysqlAsyncFilePath1: String = "src/conn/mod.rs"
+    fun `test mysql_async, measure 1`() = repeatTest(MYSQL_ASYNC, mysqlAsyncFilePath1, ::measureResolveAndHighlight)
+    fun `test mysql_async, profile resolve 1`() = repeatTest(MYSQL_ASYNC, mysqlAsyncFilePath1, ::profileResolve)
 
-    fun `test highlighting mysql_async 2`() =
-        repeatTest { highlightProjectFile(MYSQL_ASYNC, "src/connection_like/mod.rs", it) }
+    private val mysqlAsyncFilePath2: String = "src/connection_like/mod.rs"
+    fun `test mysql_async, measure 2`() = repeatTest(MYSQL_ASYNC, mysqlAsyncFilePath2, ::measureResolveAndHighlight)
+    fun `test mysql_async, profile resolve 2`() = repeatTest(MYSQL_ASYNC, mysqlAsyncFilePath2, ::profileResolve)
 
-    private fun repeatTest(f: (Timings) -> Unit) {
+    private fun repeatTest(info: RealProjectInfo, filePath: String, f: (Timings) -> Unit) {
         println("${name.substring("test ".length)}:")
         repeatBenchmark {
             val disposable = project.macroExpansionManager.setUnitTestExpansionModeAndDirectory(MacroExpansionScope.ALL, name)
+            openRealProject(info) ?: return@repeatBenchmark
+            myFixture.configureFromTempProjectFile(filePath)
             f(it)
             Disposer.dispose(disposable)
             super.tearDown()
@@ -46,82 +54,72 @@ class RsHighlightingPerformanceTest : RsRealProjectTestBase() {
         }
     }
 
-    private fun highlightProjectFile(info: RealProjectInfo, filePath: String, timings: Timings): Timings {
-        openRealProject(info) ?: return timings
-
-        myFixture.configureFromTempProjectFile(filePath)
-
+    private fun measureResolveAndHighlight(timings: Timings) {
         val modificationCount = currentPsiModificationCount()
+        buildDefMaps(timings)
+        val references = collectReferences(timings)
+        resolveReferences(timings, references)
+        highlight(timings)
+        resolveReferencesCached(references, modificationCount, timings)
+    }
 
-        // otherwise only profile build
-        val measureBuildAndResolve = true
-        if (isFeatureEnabled(RsExperiments.RESOLVE_NEW)) {
-            if (measureBuildAndResolve) {
-                val time = timesBuildDefMaps.last()
-                timesBuildDefMaps.clear()
-                timings.addMeasure("resolve2", time)
-            } else {
-                for (i in 0..Int.MAX_VALUE) {
-                    val pool = Executors.newWorkStealingPool()
-                    buildCrateDefMapForAllCrates(project, pool, async = false)
+    @Suppress("UNUSED_PARAMETER")
+    private fun profileBuildDefMaps(timings: Timings) {
+        for (i in 0..Int.MAX_VALUE) {
+            val pool = Executors.newWorkStealingPool()
+            buildCrateDefMapForAllCrates(project, pool, async = true)
+        }
+    }
 
-                    // val time = timesBuildDefMaps.last()
-                    // timesBuildDefMaps.clear()
-                    // println("Iteration #$i - $time milliseconds")
-
-                    // myFixture.editor.caretModel.moveToOffset(myFixture.file.endOffset)
-                    // myFixture.type("pub fn foo$i() {}")
-                    // PsiDocumentManager.getInstance(project).commitAllDocuments() // process PSI modification events
-                }
+    private fun profileResolve(timings: Timings) {
+        val references = collectReferences(timings)
+        var timeMin = Long.MAX_VALUE
+        for (i in 0..Int.MAX_VALUE) {
+            val time = measureTimeMillis {
+                references.forEach { it.reference?.resolve() }
             }
+            timeMin = min(timeMin, time)
+            println("Resolved all file references in $time ms  (min time is $timeMin ms)")
+            project.rustPsiManager.incRustStructureModificationCount()
+        }
+    }
+
+    private fun buildDefMaps(timings: Timings) {
+        if (!IS_NEW_RESOLVE_ENABLED) return
+
+        // Actually [CrateDefMap]s are built two times,
+        // in [openRealProject] and [CodeInsightTestFixture.configureFromTempProjectFile]
+        val time = timesBuildDefMaps.last()
+        timesBuildDefMaps.clear()
+        timings.addMeasure("resolve2", time)
+    }
+
+    private fun collectReferences(timings: Timings): Collection<RsReferenceElement> =
+        timings.measure("collecting") {
+            myFixture.file.descendantsOfType()
         }
 
-        val refs = timings.measure("collecting") {
-            myFixture.file.descendantsOfType<RsReferenceElement>()
-        }
-
+    private fun resolveReferences(timings: Timings, references: Collection<RsReferenceElement>) =
         timings.measure("resolve") {
-            refs.forEach { it.reference?.resolve() }
+            references.forEach { it.reference?.resolve() }
         }
+
+    private fun highlight(timings: Timings) =
         timings.measure("highlighting") {
             myFixture.doHighlighting()
         }
 
-        check(modificationCount == currentPsiModificationCount()) {
+    private fun resolveReferencesCached(
+        references: Collection<RsReferenceElement>,
+        oldModificationCount: Long,
+        timings: Timings
+    ) {
+        check(oldModificationCount == currentPsiModificationCount()) {
             "PSI changed during resolve and highlighting, resolve might be double counted"
         }
-
         timings.measure("resolve_cached") {
-            refs.forEach { it.reference?.resolve() }
+            references.forEach { it.reference?.resolve() }
         }
-
-        // myFixture.file.descendantsOfType<RsFunction>()
-        //     .asSequence()
-        //     .mapNotNull { it.block?.stmtList?.lastOrNull() }
-        //     .forEach { stmt ->
-        //         myFixture.editor.caretModel.moveToOffset(stmt.textOffset)
-        //         myFixture.type("2+2;")
-        //         PsiDocumentManager.getInstance(project).commitAllDocuments() // process PSI modification events
-        //
-        //         timings.measureAverage("resolve_after_typing") {
-        //             refs.forEach { it.reference?.resolve() }
-        //         }
-        //     }
-        //
-        // myFixture.file.descendantsOfType<RsFunction>()
-        //     .asSequence()
-        //     .mapNotNull { it.block?.stmtList?.lastOrNull() }
-        //     .forEach { stmt ->
-        //         myFixture.editor.caretModel.moveToOffset(stmt.textOffset)
-        //         // replace to `myFixture.type("Hash;")` to make it 10x slower
-        //         myFixture.type("HashMa;")
-        //         myFixture.editor.caretModel.moveCaretRelatively(-1, 0, false, false, false)
-        //         timings.measureAverage("completion") {
-        //             myFixture.completeBasic()
-        //         }
-        //     }
-
-        return timings
     }
 
     private fun currentPsiModificationCount() =
