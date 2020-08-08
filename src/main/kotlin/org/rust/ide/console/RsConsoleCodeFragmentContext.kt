@@ -14,6 +14,7 @@ import org.rust.lang.core.psi.*
 import org.rust.lang.core.psi.ext.block
 import org.rust.lang.core.psi.ext.childOfType
 import org.rust.lang.core.resolve.TYPES
+import org.rust.lang.core.resolve.createProcessor
 import org.rust.lang.core.resolve.findPrelude
 import org.rust.lang.core.resolve.processNestedScopesUpwards
 import org.rust.openapiext.toPsiFile
@@ -40,10 +41,11 @@ class RsConsoleCodeFragmentContext(codeFragment: RsReplCodeFragment?) {
         val prelude = findPrelude(codeFragment) ?: return
 
         val preludeItemsNames = mutableListOf<String>()
-        processNestedScopesUpwards(prelude, TYPES) {
+        val processor = createProcessor {
             preludeItemsNames += it.name
             false
         }
+        processNestedScopesUpwards(prelude, TYPES, processor)
         itemsNames += preludeItemsNames
         hasAddedNamesFromPrelude = true
     }
