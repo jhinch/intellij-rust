@@ -7,6 +7,9 @@ package org.rust.cargo.commands
 
 import com.intellij.openapi.actionSystem.CommonDataKeys
 import com.intellij.openapi.editor.Editor
+import com.intellij.openapi.util.TextRange
+import com.intellij.psi.PsiFile
+import com.intellij.psi.codeStyle.CodeStyleManager
 import com.intellij.testFramework.MapDataContext
 import com.intellij.testFramework.TestActionEvent
 import org.intellij.lang.annotations.Language
@@ -17,9 +20,64 @@ import org.rust.cargo.project.settings.rustSettings
 import org.rust.fileTree
 import org.rust.ide.actions.RustfmtCargoProjectAction
 import org.rust.ide.actions.RustfmtFileAction
+import org.rust.ide.formatter.RustfmtFormatProcessor
 import org.rust.openapiext.saveAllDocuments
 
 class RustfmtTest : RsWithToolchainTestBase() {
+
+    fun `test rustfmt is used for whole file formatting`() = doTest({
+        toml("Cargo.toml", """
+            [package]
+            name = "hello"
+            version = "0.1.0"
+            authors = []
+        """)
+
+        dir("src") {
+            rust("main.rs", """
+                fn main() {/*caret*/
+                println!("Hello, ΣΠ∫!");
+                }
+            """)
+        }
+    }, """
+        fn main() {
+            println!("Hello, ΣΠ∫!");
+        }
+    """)
+
+    fun `test rustfmt is not used for part of file formatting`() = doTest({
+        toml("Cargo.toml", """
+            [package]
+            name = "hello"
+            version = "0.1.0"
+            authors = []
+        """)
+
+        dir("src") {
+            rust("main.rs", """
+                fn foo() {
+                println!("Hello, ΣΠ∫!");
+                }
+                
+                fn main() {/*caret*/
+                println!("Hello, ΣΠ∫!");
+                }
+            """)
+        }
+    }, """
+        fn foo() {
+            println!("Hello, ΣΠ∫!");
+        }
+        
+        fn main() {
+        println!("Hello, ΣΠ∫!");
+        }
+    """) {
+        val endOffset = file.text.indexOf("fn main")
+        val textRange = TextRange(file.textRange.startOffset, endOffset)
+        reformatRange(file, textRange, shouldHitTestmark = false)
+    }
 
     fun `test rustfmt file action`() = doTest({
         toml("Cargo.toml", """
@@ -40,7 +98,7 @@ class RustfmtTest : RsWithToolchainTestBase() {
         fn main() {
             println!("Hello, ΣΠ∫!");
         }
-    """)
+    """) { reformatFile(myFixture.editor) }
 
     @MinRustcVersion("1.31.0")
     fun `test rustfmt file action edition 2018`() = doTest({
@@ -63,7 +121,7 @@ class RustfmtTest : RsWithToolchainTestBase() {
         async fn foo() {
             println!("Hello, ΣΠ∫!");
         }
-    """)
+    """) { reformatFile(myFixture.editor) }
 
     fun `test rustfmt cargo project action`() = doTest({
         toml("Cargo.toml", """
@@ -252,7 +310,14 @@ class RustfmtTest : RsWithToolchainTestBase() {
         }
     })
 
-    private fun reformatDocument(editor: Editor) {
+    private fun reformatRange(file: PsiFile, textRange: TextRange = file.textRange, shouldHitTestmark: Boolean = true) {
+        project.rustSettings.modify { it.useRustfmt = true }
+        val testmark = RustfmtFormatProcessor.Testmarks.rustfmtUsed
+        val check: (() -> Unit) -> Unit = if (shouldHitTestmark) testmark::checkHit else testmark::checkNotHit
+        check { CodeStyleManager.getInstance(project).reformatRange(file, textRange.startOffset, textRange.endOffset) }
+    }
+
+    private fun reformatFile(editor: Editor) {
         val dataContext = MapDataContext(mapOf(
             CommonDataKeys.PROJECT to project,
             CommonDataKeys.EDITOR_EVEN_IF_INACTIVE to editor
@@ -287,7 +352,7 @@ class RustfmtTest : RsWithToolchainTestBase() {
     private fun doTest(
         treeBuilder: FileTreeBuilder.() -> Unit,
         expectedTextSupplier: () -> String = { editor.document.text },
-        action: () -> Unit = { reformatDocument(myFixture.editor) }
+        action: () -> Unit = { reformatRange(myFixture.file) }
     ) {
         val fileWithCaret = fileTree(treeBuilder).create().fileWithCaret
         myFixture.configureFromTempProjectFile(fileWithCaret)
@@ -299,6 +364,6 @@ class RustfmtTest : RsWithToolchainTestBase() {
     private fun doTest(
         treeBuilder: FileTreeBuilder.() -> Unit,
         @Language("Rust") expectedText: String,
-        action: () -> Unit = { reformatDocument(myFixture.editor) }
+        action: () -> Unit = { reformatRange(myFixture.file) }
     ) = doTest(treeBuilder, { expectedText.trimIndent() }, action)
 }

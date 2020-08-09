@@ -109,7 +109,7 @@ class RustfmtWatcher {
         private fun Rustfmt.reformatDocument(cargoProject: CargoProject, document: Document) {
             checkIsDispatchThread()
             if (!document.isWritable) return
-            val formattedText = reformatDocumentText(cargoProject, document) ?: return
+            val formattedText = reformatDocumentText(cargoProject, document)?.stdout ?: return
             DocumentUtil.writeInRunUndoTransparentAction { document.setText(formattedText) }
         }
     }

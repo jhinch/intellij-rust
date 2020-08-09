@@ -6,6 +6,7 @@
 package org.rust.cargo.toolchain
 
 import com.intellij.execution.ExecutionException
+import com.intellij.execution.process.ProcessOutput
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.runReadAction
 import com.intellij.openapi.editor.Document
@@ -26,7 +27,11 @@ import java.nio.file.Path
 class Rustfmt(private val rustfmtExecutable: Path) {
 
     @Throws(ExecutionException::class)
-    fun reformatDocumentText(cargoProject: CargoProject, document: Document): String? {
+    fun reformatDocumentText(
+        cargoProject: CargoProject,
+        document: Document,
+        suppressErrors: Boolean = true
+    ): ProcessOutput? {
         val file = document.virtualFile ?: return null
         if (file.isNotRustFile || !file.isValid) return null
 
@@ -54,17 +59,15 @@ class Rustfmt(private val rustfmtExecutable: Path) {
             }
         }
 
-        val processOutput = try {
+        return try {
             GeneralCommandLine(rustfmtExecutable)
                 .withWorkDirectory(cargoProject.workingDirectory)
                 .withParameters(arguments)
                 .withCharset(Charsets.UTF_8)
                 .execute(cargoProject.project, false, stdIn = document.text.toByteArray())
         } catch (e: ExecutionException) {
-            if (isUnitTestMode) throw e else return null
+            if (!suppressErrors || isUnitTestMode) throw e else null
         }
-
-        return processOutput.stdout
     }
 
     @Throws(ExecutionException::class)
