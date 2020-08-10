@@ -11,6 +11,11 @@
         <projectOpenProcessor id="Cargo" implementation="org.rust.cargo.project.CargoProjectOpenProcessor"/>
         <directoryProjectGenerator implementation="org.rust.ide.newProject.RsDirectoryProjectGenerator"/>
 
+        <!-- SDK -->
+        <sdkType implementation="org.rust.ide.sdk.RsSdkType"/>
+        <projectService serviceImplementation="org.rust.cargo.project.configurable.RsConfigurableToolchainList"/>
+        <backgroundPostStartupActivity implementation="org.rust.ide.sdk.RsSdkUpdater"/>
+
         <!-- File-type Factory -->
 
         <fileType name="Rust"
@@ -114,8 +119,8 @@
         <indexPatternBuilder implementation="org.rust.ide.todo.RsTodoIndexPatternBuilder"/>
         <todoIndexer filetype="Rust" implementationClass="org.rust.ide.todo.RsTodoIndexer"/>
         <indexPatternSearch
-            id="RsTodoSearcher"
-            implementation="org.rust.ide.todo.RsTodoSearcher"/>
+                id="RsTodoSearcher"
+                implementation="org.rust.ide.todo.RsTodoSearcher"/>
 
         <!-- Smart Enter Processor -->
 
@@ -147,13 +152,16 @@
         <!-- Hints -->
 
         <codeInsight.typeInfo language="Rust" implementationClass="org.rust.ide.hints.type.RsExpressionTypeProvider"/>
-        <codeInsight.parameterInfo language="Rust" implementationClass="org.rust.ide.hints.parameter.RsParameterInfoHandler"/>
+        <codeInsight.parameterInfo language="Rust"
+                                   implementationClass="org.rust.ide.hints.parameter.RsParameterInfoHandler"/>
         <codeInsight.parameterInfo language="Rust"
                                    implementationClass="org.rust.ide.hints.parameter.RsGenericParameterInfoHandler"/>
         <codeInsight.parameterNameHints language="Rust"
                                         implementationClass="org.rust.ide.hints.parameter.RsInlayParameterHintsProvider"/>
-        <codeInsight.inlayProvider language="Rust" implementationClass="org.rust.ide.hints.type.RsInlayTypeHintsProvider"/>
-        <codeInsight.inlayProvider language="Rust" implementationClass="org.rust.ide.hints.type.RsChainMethodTypeHintsProvider"/>
+        <codeInsight.inlayProvider language="Rust"
+                                   implementationClass="org.rust.ide.hints.type.RsInlayTypeHintsProvider"/>
+        <codeInsight.inlayProvider language="Rust"
+                                   implementationClass="org.rust.ide.hints.type.RsChainMethodTypeHintsProvider"/>
 
         <declarationRangeHandler key="org.rust.lang.core.psi.RsStructItem"
                                  implementationClass="org.rust.ide.hints.RsStructItemDeclarationRangeHandler"/>
@@ -982,20 +990,38 @@
 
     </extensions>
 
+    <extensions defaultExtensionNs="org.rust">
+        <!-- SDK Flavors -->
+        <sdkFlavor implementation="org.rust.ide.sdk.flavors.RustupSdkFlavor"/>
+        <sdkFlavor implementation="org.rust.ide.sdk.flavors.RustupToolchainSdkFlavor"/>
+        <sdkFlavor implementation="org.rust.ide.sdk.flavors.SystemPathFlavor"/>
+        <sdkFlavor implementation="org.rust.ide.sdk.flavors.UnixSdkFlavor"/>
+        <sdkFlavor implementation="org.rust.ide.sdk.flavors.MacSdkFlavor"/>
+        <sdkFlavor implementation="org.rust.ide.sdk.flavors.WinSdkFlavor"/>
+    </extensions>
+
     <extensionPoints>
         <extensionPoint qualifiedName="org.rust.runConfigurationExtension"
                         interface="org.rust.cargo.runconfig.CargoCommandConfigurationExtension"
+                        dynamic="true"/>
+        <extensionPoint qualifiedName="org.rust.sdkFlavor"
+                        interface="org.rust.ide.sdk.flavors.RsSdkFlavor"
+                        dynamic="true"/>
+        <extensionPoint qualifiedName="org.rust.remoteSdkValidator"
+                        interface="org.rust.remote.RsRemoteSdkValidator"
                         dynamic="true"/>
     </extensionPoints>
 
     <applicationListeners>
         <listener class="org.rust.ide.navigation.goto.RsGoToDeclarationRunningService$Listener"
-                  topic="com.intellij.openapi.actionSystem.ex.AnActionListener" />
+                  topic="com.intellij.openapi.actionSystem.ex.AnActionListener"/>
     </applicationListeners>
 
     <projectListeners>
         <listener class="org.rust.lang.core.macros.MacroExpansionManagerWaker"
-                  topic="org.rust.cargo.project.model.CargoProjectsService$CargoProjectsListener" />
+                  topic="org.rust.cargo.project.model.CargoProjectsService$CargoProjectsListener"/>
+        <listener class="org.rust.ide.sdk.RsSdkTableListener"
+                  topic="com.intellij.openapi.projectRoots.ProjectJdkTable$Listener"/>
     </projectListeners>
 
     <actions>

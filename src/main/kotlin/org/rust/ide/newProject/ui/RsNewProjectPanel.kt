@@ -27,6 +27,7 @@ import org.rust.ide.newProject.ConfigurationData
 import org.rust.ide.newProject.RsCustomTemplate
 import org.rust.ide.newProject.RsGenericTemplate
 import org.rust.ide.newProject.RsProjectTemplate
+import org.rust.ide.sdk.toolchain
 import org.rust.ide.ui.RsLayoutBuilder
 import org.rust.openapiext.UiDebouncer
 import javax.swing.JList
@@ -41,7 +42,7 @@ class RsNewProjectPanel(
     private val rustProjectSettings = RustProjectSettingsPanel(updateListener = updateListener)
 
     private val cargo: Cargo?
-        get() = rustProjectSettings.data.toolchain?.rawCargo()
+        get() = rustProjectSettings.sdk?.toolchain?.rawCargo()
 
     private val templateList = JBList(
         RsGenericTemplate("Binary (application)", true),
@@ -119,7 +120,7 @@ class RsNewProjectPanel(
 
     private val updateDebouncer = UiDebouncer(this)
 
-    val data: ConfigurationData get() = ConfigurationData(rustProjectSettings.data, selectedTemplate)
+    val data: ConfigurationData get() = ConfigurationData(rustProjectSettings.sdk, selectedTemplate)
 
     fun attachTo(layout: RsLayoutBuilder) = with(layout) {
         rustProjectSettings.attachTo(this)
@@ -151,7 +152,7 @@ class RsNewProjectPanel(
 
     @Throws(ConfigurationException::class)
     fun validateSettings() {
-        rustProjectSettings.validateSettings()
+        rustProjectSettings.validateSettings(sdkRequired = true)
 
         if (needInstallCargoGenerate) {
             throw ConfigurationException("cargo-generate is needed to create a project from a custom template")

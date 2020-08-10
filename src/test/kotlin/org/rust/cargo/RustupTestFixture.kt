@@ -5,7 +5,10 @@
 
 package org.rust.cargo
 
+import com.intellij.openapi.application.runWriteAction
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.projectRoots.ProjectJdkTable
+import com.intellij.openapi.projectRoots.Sdk
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.vfs.newvfs.impl.VfsRootAccess
 import com.intellij.testFramework.fixtures.impl.BaseFixture
@@ -13,7 +16,8 @@ import org.rust.cargo.project.settings.rustSettings
 import org.rust.cargo.toolchain.RustToolchain
 import org.rust.cargo.toolchain.Rustup
 import org.rust.cargo.util.DownloadResult
-import java.nio.file.Paths
+import org.rust.ide.sdk.RsSdkUtils.findOrCreateSdk
+import org.rust.ide.sdk.toolchain
 
 // TODO: use it in [org.rust.WithRustup]
 open class RustupTestFixture(
@@ -22,8 +26,9 @@ open class RustupTestFixture(
     private var project: Project
 ) : BaseFixture() {
 
-    val toolchain: RustToolchain? by lazy { RustToolchain.suggest() }
-    val rustup: Rustup? by lazy { toolchain?.rustup(Paths.get(".")) }
+    private val sdk: Sdk? by lazy { findOrCreateSdk() }
+    val toolchain: RustToolchain? by lazy { sdk?.toolchain }
+    val rustup: Rustup? by lazy { toolchain?.rustup() }
     val stdlib: VirtualFile? by lazy { (rustup?.downloadStdlib() as? DownloadResult.Ok)?.value }
 
     open val skipTestReason: String?
@@ -36,13 +41,17 @@ open class RustupTestFixture(
     override fun setUp() {
         super.setUp()
         stdlib?.let { VfsRootAccess.allowRootAccess(testRootDisposable, it.path) }
-        if (toolchain != null) {
-            project.rustSettings.modify { it.toolchain = toolchain }
+        if (sdk != null) {
+            project.rustSettings.modify { it.sdk = sdk }
         }
     }
 
     override fun tearDown() {
-        project.rustSettings.modify { it.toolchain = null }
+        project.rustSettings.modify { it.sdk = null }
+        val sdk = sdk
+        if (sdk != null) {
+            runWriteAction { ProjectJdkTable.getInstance().removeJdk(sdk) }
+        }
         super.tearDown()
     }
 }

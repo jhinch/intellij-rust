@@ -33,6 +33,7 @@ interface RsLayoutBuilder {
     fun row(text: String = "", component: JComponent, toolTip: String = "")
     fun block(text: String, block: RsLayoutBuilder.() -> Unit)
     fun component(component: JComponent)
+    fun add(panel: JPanel)
 }
 
 private class RsLayoutBuilderImpl(
@@ -65,5 +66,9 @@ private class RsLayoutBuilderImpl(
             add(component, BorderLayout.NORTH)
         }
         panel.add(innerPanel)
+    }
+
+    override fun add(panel: JPanel) {
+        this.panel.add(panel)
     }
 }

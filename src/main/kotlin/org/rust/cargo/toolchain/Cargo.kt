@@ -58,7 +58,7 @@ import java.nio.file.Paths
  * It is impossible to guarantee that paths to the project or executables are valid,
  * because the user can always just `rm ~/.cargo/bin -rf`.
  */
-class Cargo(private val cargoExecutable: Path, private val rustcExecutable: Path) {
+class Cargo(private val cargoExecutable: Path, private val rustcExecutable: Path, val toolchain: String?) {
 
     data class BinaryCrate(val name: String, val version: SemVer? = null) {
         companion object {
@@ -302,7 +302,7 @@ class Cargo(private val cargoExecutable: Path, private val rustcExecutable: Path
         }
 
         val useClippy = settings.externalLinter == ExternalLinter.CLIPPY
-            && !checkNeedInstallClippy(project, cargoProjectDirectory)
+            && !checkNeedInstallClippy(project)
         val checkCommand = if (useClippy) "clippy" else "check"
         return CargoCommandLine(checkCommand, cargoProjectDirectory, arguments)
             .execute(project, owner, ignoreExitCode = true)
@@ -317,8 +317,8 @@ class Cargo(private val cargoExecutable: Path, private val rustcExecutable: Path
     private fun toGeneralCommandLine(project: Project, commandLine: CargoCommandLine, colors: Boolean): GeneralCommandLine =
         with(patchArgs(commandLine, colors)) {
             val parameters = buildList<String> {
-                if (channel != RustChannel.DEFAULT) {
-                    add("+$channel")
+                if (toolchain != null) {
+                    add("+$toolchain")
                 }
                 if (project.rustSettings.useOffline) {
                     val cargoProject = findCargoProject(project, additionalArguments, workingDirectory)
