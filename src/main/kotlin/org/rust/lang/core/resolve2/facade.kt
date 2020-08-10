@@ -12,6 +12,7 @@ import com.intellij.openapi.vfs.newvfs.persistent.PersistentFS
 import org.rust.ide.utils.isEnabledByCfg
 import org.rust.lang.core.crate.Crate
 import org.rust.lang.core.crate.crateGraph
+import org.rust.lang.core.crate.impl.CrateGraphServiceImpl
 import org.rust.lang.core.crate.impl.DoctestCrate
 import org.rust.lang.core.psi.*
 import org.rust.lang.core.psi.ext.*
@@ -28,13 +29,12 @@ val IS_NEW_RESOLVE_ENABLED: Boolean = true
 // val IS_NEW_RESOLVE_ENABLED: Boolean = isFeatureEnabled(RsExperiments.RESOLVE_NEW)
 
 fun buildCrateDefMapForAllCrates(project: Project, pool: Executor, async: Boolean = true) {
-    val topSortedCrates = runReadAction { project.crateGraph.topSortedCrates }
+    val crateGraph = project.crateGraph
+    val topSortedCrates = runReadAction { crateGraph.topSortedCrates }
     if (topSortedCrates.isEmpty()) return
 
     // println("\trunNameResolution")
-    for (crate in topSortedCrates) {
-        crate.resetDefMap()
-    }
+    (crateGraph as CrateGraphServiceImpl).crateDefMaps.clear()  // todo
     val time = measureTimeMillis {
         if (async) {
             AsyncCrateDefMapBuilder(pool, topSortedCrates).build()

@@ -5,6 +5,7 @@
 
 package org.rust.lang.core.resolve
 
+import org.junit.Ignore
 import org.rust.ExpandMacros
 import org.rust.MockEdition
 import org.rust.ProjectDescriptor
@@ -782,6 +783,7 @@ class RsMacroExpansionResolveTest : RsResolveTestBase() {
         }
     """)
 
+    @Ignore  // todo local_inner_macros
     @ProjectDescriptor(WithDependencyRustProjectDescriptor::class)
     @BothEditions
     fun `test local_inner_macros`() = stubOnlyResolve("""

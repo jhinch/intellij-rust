@@ -9,7 +9,9 @@ import com.intellij.extapi.psi.StubBasedPsiElementBase
 import com.intellij.openapi.util.registry.Registry
 import com.intellij.psi.NavigatablePsiElement
 import com.intellij.psi.PsiElement
+import org.rust.lang.core.crate.Crate
 import org.rust.lang.core.psi.*
+import org.rust.lang.core.resolve2.CrateDefMap
 import org.rust.lang.core.stubs.RsAttributeOwnerStub
 import org.rust.lang.utils.evaluation.CfgEvaluator
 import org.rust.lang.utils.evaluation.ThreeValuedLogic
@@ -208,10 +210,18 @@ class QueryAttributes(
 val RsDocAndAttributeOwner.isEnabledByCfgSelf: Boolean
     get() = evaluateCfg() != ThreeValuedLogic.False
 
+fun RsDocAndAttributeOwner.isEnabledByCfgSelf(crate: Crate): Boolean =
+    evaluateCfg(crate) != ThreeValuedLogic.False
+
 val RsDocAndAttributeOwner.isCfgUnknownSelf: Boolean
     get() = evaluateCfg() == ThreeValuedLogic.Unknown
 
-private fun RsDocAndAttributeOwner.evaluateCfg(): ThreeValuedLogic {
+/**
+ * [crateOrNull] is passed because it is used in resolve2 during building [CrateDefMap]
+ * so we can't use [containingCrate] because it will traverse [superMods],
+ * but expanded elements in resolve2 don't have correct [superMods]
+ * */
+private fun RsDocAndAttributeOwner.evaluateCfg(crateOrNull: Crate? = null): ThreeValuedLogic {
     if (!CFG_ATTRIBUTES_ENABLED_KEY.asBoolean()) return ThreeValuedLogic.True
 
     // TODO: add cfg to RsFile's stub and remove this line
@@ -225,7 +235,7 @@ private fun RsDocAndAttributeOwner.evaluateCfg(): ThreeValuedLogic {
     // this will return the library as containing package.
     // When the application now requests certain features, which are not enabled by default in the library
     // we will evaluate features wrongly here
-    val crate = containingCrate ?: return ThreeValuedLogic.True
+    val crate = crateOrNull ?: containingCrate ?: return ThreeValuedLogic.True
     val features = crate.features.associate { it.name to it.state }
     return CfgEvaluator(crate.cargoWorkspace.cfgOptions, crate.cfgOptions, features, crate.origin).evaluate(cfgAttributes)
 }

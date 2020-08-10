@@ -102,6 +102,7 @@ class ModData(
     val fileId: Int,
     // todo тип? String / List<String> / ModPath
     val fileRelativePath: String,  // starts with ::
+    val isEnabledByCfg: Boolean,
     val isEnum: Boolean = false
 ) {
     val name: String get() = path.name

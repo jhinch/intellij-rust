@@ -10,7 +10,6 @@ import org.rust.cargo.CfgOptions
 import org.rust.cargo.project.model.CargoProject
 import org.rust.cargo.project.workspace.CargoWorkspace
 import org.rust.cargo.project.workspace.PackageOrigin
-import org.rust.lang.core.crate.impl.CrateGraphServiceImpl
 import org.rust.lang.core.psi.RsFile
 import org.rust.lang.core.resolve2.CrateDefMap
 import java.util.*
@@ -92,13 +91,6 @@ interface Crate {
     val defMap: CrateDefMap?
 
     fun updateDefMap() {}
-
-    // todo лучше метод resetAllDefMaps в CrateGraphService ?
-    fun resetDefMap() {
-        val crateId = id ?: return
-        val crateGraphService = cargoProject.project.crateGraph as CrateGraphServiceImpl  // todo
-        crateGraphService.crateDefMaps.remove(crateId)
-    }
 }
 
 fun Crate.findDependency(normName: String): Crate? =
