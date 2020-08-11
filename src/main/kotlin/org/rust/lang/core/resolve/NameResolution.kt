@@ -16,10 +16,7 @@ import com.intellij.openapi.util.io.FileUtil
 import com.intellij.openapiext.Testmark
 import com.intellij.openapiext.hitOnFalse
 import com.intellij.openapiext.isUnitTestMode
-import com.intellij.psi.PsiElement
-import com.intellij.psi.PsiFile
-import com.intellij.psi.PsiManager
-import com.intellij.psi.StubBasedPsiElement
+import com.intellij.psi.*
 import com.intellij.psi.stubs.StubElement
 import com.intellij.psi.util.CachedValue
 import com.intellij.psi.util.CachedValueProvider
@@ -29,7 +26,6 @@ import org.rust.cargo.project.workspace.CargoWorkspace
 import org.rust.cargo.project.workspace.PackageOrigin
 import org.rust.cargo.util.AutoInjectedCrates.CORE
 import org.rust.cargo.util.AutoInjectedCrates.STD
-import org.rust.ide.experiments.RsExperiments
 import org.rust.ide.injected.isDoctestInjection
 import org.rust.lang.RsConstants
 import org.rust.lang.core.FeatureAvailability
@@ -57,7 +53,6 @@ import org.rust.lang.core.types.infer.foldCtConstParameterWith
 import org.rust.lang.core.types.infer.foldTyTypeParameterWith
 import org.rust.lang.core.types.infer.substitute
 import org.rust.lang.core.types.ty.*
-import org.rust.openapiext.isFeatureEnabled
 import org.rust.openapiext.testAssert
 import org.rust.openapiext.toPsiFile
 import org.rust.stdext.buildList
@@ -161,6 +156,44 @@ fun processMethodCallExprResolveVariants(
     processMethodDeclarationsWithDeref(lookup, receiverType, context, processor)
 
 /**
+ * This class is needed to reuse [processModDeclResolveVariants] in Resolve2.
+ * Because we can't call `resolve` on [RsModDeclItem] in Resolve2.
+ * (See `RsModDeclItem.resolve` in [org.rust.lang.core.resolve2.ModCollector].)
+ */
+class RsModDeclItemData(
+    val project: Project,
+
+    // todo why both `name` and `referenceName` ?
+    val name: String?,
+    val referenceName: String,
+    val pathAttribute: String?,
+    val isLocal: Boolean,
+
+    val containingModOwnedDirectory: PsiDirectory?,
+    val containingModName: String?,
+    val containingModIsFile: Boolean,
+    val contextualFile: PsiFile,
+    val inCrateRoot: Lazy<Boolean>
+)
+
+fun processModDeclResolveVariants(modDecl: RsModDeclItem, processor: RsResolveProcessor): Boolean {
+    val containingMod = modDecl.containingMod
+    val data = RsModDeclItemData(
+        project = modDecl.project,
+        name = modDecl.name,
+        referenceName = modDecl.referenceName,
+        isLocal = modDecl.isLocal,
+        pathAttribute = modDecl.pathAttribute,
+        containingModOwnedDirectory = containingMod.getOwnedDirectory(),
+        containingModName = containingMod.modName,
+        containingModIsFile = containingMod is RsFile,
+        contextualFile = modDecl.contextualFile,
+        inCrateRoot = lazy(LazyThreadSafetyMode.NONE) { containingMod.isCrateRoot }
+    )
+    return processModDeclResolveVariants(data, processor)
+}
+
+/**
  * Looks-up file corresponding to particular module designated by `mod-declaration-item`:
  *
  *  ```
@@ -182,22 +215,21 @@ fun processMethodCallExprResolveVariants(
  * Reference:
  *      https://github.com/rust-lang-nursery/reference/blob/master/src/items/modules.md
  */
-fun processModDeclResolveVariants(modDecl: RsModDeclItem, processor: RsResolveProcessor): Boolean {
-    val psiMgr = PsiManager.getInstance(modDecl.project)
-    val containingMod = modDecl.containingMod
+fun processModDeclResolveVariants(modDeclData: RsModDeclItemData, processor: RsResolveProcessor): Boolean {
+    val psiMgr = PsiManager.getInstance(modDeclData.project)
 
-    val ownedDirectory = containingMod.getOwnedDirectory()
-    val contextualFile = modDecl.contextualFile
+    val ownedDirectory = modDeclData.containingModOwnedDirectory
+    val contextualFile = modDeclData.contextualFile
     val originalFileOriginal = contextualFile.originalFile.virtualFile
     val inModRs = contextualFile.name == RsConstants.MOD_RS_FILE
-    val inCrateRoot = lazy(LazyThreadSafetyMode.NONE) { containingMod.isCrateRoot }
+    val inCrateRoot = modDeclData.inCrateRoot
 
-    val explicitPath = modDecl.pathAttribute
+    val explicitPath = modDeclData.pathAttribute
     if (explicitPath != null) {
         // Explicit path is relative to:
         // * owned directory when module declared in inline module
         // * parent of module declaration otherwise
-        val dir = if (containingMod is RsFile) {
+        val dir = if (modDeclData.containingModIsFile) {
             modDeclExplicitPathInNonInlineModule.hit()
             contextualFile.parent
         } else {
@@ -208,13 +240,13 @@ fun processModDeclResolveVariants(modDecl: RsModDeclItem, processor: RsResolvePr
             ?: return false
         val mod = psiMgr.findFile(vFile)?.rustFile ?: return false
 
-        val name = modDecl.name ?: return false
+        val name = modDeclData.name ?: return false
         return processor(name, mod)
     }
     if (ownedDirectory == null) return false
-    if (modDecl.isLocal) return false
+    if (modDeclData.isLocal) return false
 
-    val modDeclName = modDecl.referenceName
+    val modDeclName = modDeclData.referenceName
 
     fun fileName(rawName: String): String {
         val fileName = FileUtil.getNameWithoutExtension(rawName)
@@ -252,7 +284,7 @@ fun processModDeclResolveVariants(modDecl: RsModDeclItem, processor: RsResolvePr
             continue
         }
 
-        if (vDir.name == containingMod.modName) {
+        if (vDir.name == modDeclData.containingModName) {
             for (vFile in vDir.children) {
                 if (vFile.isDirectory) continue
                 val rawFileName = vFile.name

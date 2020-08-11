@@ -8,6 +8,7 @@ package org.rust.lang.core.resolve2
 import com.intellij.openapi.diagnostic.Logger
 import org.rust.cargo.project.workspace.CargoWorkspace
 import org.rust.lang.core.crate.CratePersistentId
+import org.rust.lang.core.psi.RsEnumVariant
 import org.rust.lang.core.psi.ext.RsMod
 import org.rust.lang.core.psi.ext.containingCrate
 import org.rust.lang.core.psi.ext.superMods
@@ -98,15 +99,18 @@ class ModData(
     val parent: ModData?,
     val crate: CratePersistentId,
     val path: ModPath,
+    val isEnabledByCfg: Boolean,
     /** id of containing file */
     val fileId: Int,
     // todo тип? String / List<String> / ModPath
     val fileRelativePath: String,  // starts with ::
-    val isEnabledByCfg: Boolean,
+    /** `fileId` of owning directory */
+    val ownedDirectoryId: Int?,
     val isEnum: Boolean = false
 ) {
     val name: String get() = path.name
     val isCrateRoot: Boolean get() = parent == null
+    val isRsFile: Boolean get() = fileRelativePath.isEmpty()
     val parents: Sequence<ModData> get() = generateSequence(this) { it.parent }
 
     val childModules: MutableMap<String, ModData> = hashMapOf()
@@ -261,7 +265,7 @@ sealed class Visibility {
 
     object Public : Visibility()
 
-    /** includes [Private] */
+    /** includes private */
     class Restricted(val inMod: ModData) : Visibility()
 
     /**

@@ -629,6 +629,26 @@ class RsMacroExpansionResolveTest : RsResolveTestBase() {
     """)
 
     @MockEdition(CargoWorkspace.Edition.EDITION_2018)
+    fun `test mod declared with macro inside inline expanded mod`() = stubOnlyResolve("""
+    //- main.rs
+        macro_rules! gen_mod_decl_item {
+            () => { mod foo2; };
+        }
+        macro_rules! gen_mod_item {
+            () => { mod foo1 { gen_mod_decl_item!(); } };
+        }
+
+        gen_mod_item!();
+
+        use foo1::foo2::S;
+        fn func(_: S) {}
+                 //^ foo1/foo2.rs
+    //- foo1/foo2.rs
+        pub struct S;
+                 //X
+    """)
+
+    @MockEdition(CargoWorkspace.Edition.EDITION_2018)
     fun `test mod with path attribute declared with macro`() = stubOnlyResolve("""
     //- main.rs
         macro_rules! foo {

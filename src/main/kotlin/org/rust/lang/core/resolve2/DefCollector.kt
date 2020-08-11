@@ -30,7 +30,7 @@ class DefCollector(
     private val crateInfo: CrateInfo
 ) {
 
-    /*
+    /**
      * Reversed glob-imports graph, that is
      * for each module (`targetMod`) store all modules which contain glob import to `targetMod`
      */
@@ -291,18 +291,8 @@ class DefCollector(
 
             processDollarCrate(call, macro, expandedText, ranges, expansion)
 
-            if (expansion.elements.any { it is RsModDeclItem }) {
-                // todo
-                //  can't use expandedItems otherwise we fall into recursion:
-                //  `toRsMod` will use `expandedItems`, which will use `.resolve()` on macro call (if it exists)
-                val containingMod = call.containingMod.toRsMod(project, useExpandedItems = false)
-                check(containingMod != null) { "Can't find containingMod for ${call.containingMod}" }
-                if (containingMod != null) {
-                    expansion.elements.forEach {
-                        it.setContext(containingMod)
-                    }
-                }
-            }
+            // Note: we don't need to call [RsExpandedElement.setContext] for [expansion.elements],
+            // because it is needed only for [RsModDeclItem], and we use our own resolve for [RsModDeclItem]
 
             processExpandedItems(call.containingMod, expansion.elements, call.depth + 1)
             true
@@ -463,7 +453,7 @@ class MacroCallInfo(
     val depth: Int,
     val macroDef: MacroInfo?,  // for textual scoped macros
     /**
-     * `srcOffset` - [CrateId]
+     * `srcOffset` - [CratePersistentId]
      * `dstOffset` - index of [MACRO_DOLLAR_CRATE_IDENTIFIER] in [body]
      */
     val dollarCrateMap: RangeMap = RangeMap.EMPTY

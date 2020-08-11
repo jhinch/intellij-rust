@@ -5,10 +5,17 @@
 
 package org.rust.lang.core.resolve2
 
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.io.FileUtil
+import com.intellij.openapi.vfs.newvfs.persistent.PersistentFS
 import com.intellij.openapiext.isUnitTestMode
+import com.intellij.psi.PsiDirectory
+import com.intellij.psi.PsiFile
 import org.rust.cargo.project.workspace.CargoWorkspace.Edition.EDITION_2015
 import org.rust.cargo.util.AutoInjectedCrates.CORE
 import org.rust.cargo.util.AutoInjectedCrates.STD
+import org.rust.lang.RsConstants
+import org.rust.lang.RsFileType
 import org.rust.lang.core.crate.Crate
 import org.rust.lang.core.crate.CratePersistentId
 import org.rust.lang.core.macros.MACRO_DOLLAR_CRATE_IDENTIFIER
@@ -16,14 +23,17 @@ import org.rust.lang.core.macros.RangeMap
 import org.rust.lang.core.macros.RsExpandedElement
 import org.rust.lang.core.psi.*
 import org.rust.lang.core.psi.ext.*
+import org.rust.lang.core.resolve.RsModDeclItemData
+import org.rust.lang.core.resolve.collectResolveVariants
 import org.rust.lang.core.resolve.namespaces
-import org.rust.openapiext.fileId
-import org.rust.openapiext.testAssert
+import org.rust.lang.core.resolve.processModDeclResolveVariants
+import org.rust.openapiext.*
 import kotlin.test.assertEquals
 
 // todo придумать имя получше?
 /** Contains static information of all explicitly declared imports and macros */
 class CrateInfo(val crate: Crate) {
+    val project: Project = crate.cargoProject.project
     val imports: MutableList<Import> = mutableListOf()
     val macroCalls: MutableList<MacroCallInfo> = mutableListOf()
 }
@@ -58,14 +68,17 @@ fun buildCrateDefMapContainingExplicitItems(
     // todo check that correct prelude is always selected (core vs std)
     val prelude: ModData? = allDependenciesDefMaps.values.map { it.prelude }.firstOrNull()
 
+    val crateRootOwnedDirectory = crateRoot.parent
+        ?: error("Can't find parent directory for crate root of $crate crate")
     val crateRootData = ModData(
         visibleItems = hashMapOf(),
         parent = null,
         crate = crateId,
         path = ModPath(crateId, emptyList()),
+        isEnabledByCfg = true,
         fileId = crateRoot.virtualFile.fileId,
         fileRelativePath = "",
-        isEnabledByCfg = true
+        ownedDirectoryId = crateRootOwnedDirectory.virtualFile.fileId
     )
     val defMap = CrateDefMap(
         crateId,
@@ -133,6 +146,7 @@ class ModCollector(
 
     private val imports: MutableList<Import> get() = crateInfo.imports
     private val crate: Crate get() = crateInfo.crate
+    private val project: Project get() = crateInfo.project
 
     /** [itemsOwner] - [RsMod] or [RsForeignModItem] */
     fun collectElements(itemsOwner: RsItemsOwner) = collectElements(itemsOwner.itemsAndMacros.toList())
@@ -235,6 +249,7 @@ class ModCollector(
         }
     }
 
+    // todo причём здесь RsFile ?
     /** [name] passed for performance reason, because [RsFile.modName] is slow */
     private fun convertToVisItem(item: RsItemElement, name: String): VisItem? {
         val isEnabledByCfg = modData.isEnabledByCfg && item.isEnabledByCfgSelf(crate)
@@ -247,18 +262,18 @@ class ModCollector(
     private fun tryCollectChildModule(item: RsItemElement): ModData? {
         if (item is RsEnumItem) return collectEnumAsModData(item)
 
-        val (childMod, hasMacroUse) = when (item) {
-            is RsModItem -> item to item.hasMacroUse
+        val (childMod, hasMacroUse, pathAttribute) = when (item) {
+            is RsModItem -> Triple(item, item.hasMacroUse, item.pathAttribute)
             is RsModDeclItem -> {
-                val childMod = item.reference.resolve() as? RsMod ?: return null
-                childMod to item.hasMacroUse
+                val childMod: RsMod = item.resolve(modData, project) ?: return null
+                Triple(childMod, item.hasMacroUse, item.pathAttribute)
             }
             else -> return null
         }
         // Note: don't use `childMod.isEnabledByCfgSelf`, because `isEnabledByCfg` doesn't work for `RsFile`
-        val isEnabledByCfg = modData.isEnabledByCfg && item.isEnabledByCfgSelf(crate)
         val childModName = item.name ?: return null
-        val childModData = collectChildModule(childMod, childModName, isEnabledByCfg)
+        val isEnabledByCfg = modData.isEnabledByCfg && item.isEnabledByCfgSelf(crate)
+        val childModData = collectChildModule(childMod, childModName, isEnabledByCfg, pathAttribute)
         if (hasMacroUse && isEnabledByCfg) modData.legacyMacros += childModData.legacyMacros
         return childModData
     }
@@ -267,7 +282,12 @@ class ModCollector(
      * We have to pass [childModName], because we can't use [RsMod.modName] -
      * if mod declaration is expanded from macro, then [RsFile.declaration] will be null
      */
-    private fun collectChildModule(childMod: RsMod, childModName: String, isEnabledByCfg: Boolean): ModData {
+    private fun collectChildModule(
+        childMod: RsMod,
+        childModName: String,
+        isEnabledByCfg: Boolean,
+        pathAttribute: String?
+    ): ModData {
         val childModPath = modData.path.append(childModName)
         val (fileId, fileRelativePath) = if (childMod is RsFile) {
             childMod.virtualFile.fileId to ""
@@ -275,14 +295,16 @@ class ModCollector(
             modData.fileId to "${modData.fileRelativePath}::$childModName"
         }
         val childModData = ModData(
-            hashMapOf(),
-            modData,
-            modData.crate,
-            childModPath,
-            fileId,
-            fileRelativePath,
-            isEnabledByCfg
+            visibleItems = hashMapOf(),
+            parent = modData,
+            crate = modData.crate,
+            path = childModPath,
+            isEnabledByCfg = isEnabledByCfg,
+            fileId = fileId,
+            fileRelativePath = fileRelativePath,
+            ownedDirectoryId = childMod.getOwnedDirectory(modData, pathAttribute)?.virtualFile?.fileId
         )
+        // todo не делать если вызывается из expandMacros ?
         childModData.legacyMacros += modData.legacyMacros
 
         val collector = ModCollector(childModData, defMap, crateRoot, crateInfo)
@@ -306,9 +328,10 @@ class ModCollector(
             parent = modData,
             crate = modData.crate,
             path = enumPath,
+            isEnabledByCfg = modData.isEnabledByCfg && enum.isEnabledByCfgSelf(crate),
             fileId = modData.fileId,
             fileRelativePath = "${modData.fileRelativePath}::$enumName",
-            isEnabledByCfg = modData.isEnabledByCfg && enum.isEnabledByCfgSelf(crate),
+            ownedDirectoryId = modData.ownedDirectoryId,  // actually can use any value here
             isEnum = true
         )
     }
@@ -457,4 +480,71 @@ private fun ModData.checkChildModulesAndVisibleItemsConsistency() {
         check(visibleItems[name]?.types?.isModOrEnum == true)
         { "Inconsistent `visibleItems` and `childModules` in $this for name $name" }
     }
+}
+
+private fun ModData.getOwnedDirectory(project: Project): PsiDirectory? {
+    val ownedDirectoryId = ownedDirectoryId ?: return null
+    return PersistentFS.getInstance()
+        .findFileById(ownedDirectoryId)
+        ?.toPsiDirectory(project)
+}
+
+private fun ModData.asPsiFile(project: Project): PsiFile? =
+    PersistentFS.getInstance()
+        .findFileById(fileId)
+        ?.toPsiFile(project)
+        ?: run {
+            RESOLVE_LOG.error("Can't find PsiFile for $this")
+            return null
+        }
+
+/**
+ * We have to use our own resolve for [RsModDeclItem],
+ * because sometimes we can't find `containingMod` to set as their `context`,
+ * thus default resolve will not work.
+ * See [RsMacroExpansionResolveTest.`test mod declared with macro inside inline expanded mod`]
+ */
+private fun RsModDeclItem.resolve(modData: ModData, project: Project): RsFile? {
+    val name = name ?: return null
+    val containingModOwnedDirectory = modData.getOwnedDirectory(project)
+    val contextualFile = modData.asPsiFile(project) ?: return null
+    val modDeclData = RsModDeclItemData(
+        project = project,
+        name = name,
+        referenceName = name,
+        pathAttribute = pathAttribute,
+        isLocal = false,
+        containingModOwnedDirectory = containingModOwnedDirectory,
+        containingModName = if (modData.isCrateRoot) "" /* will not be used */ else modData.name,
+        containingModIsFile = modData.isRsFile,
+        contextualFile = contextualFile,
+        inCrateRoot = lazy(LazyThreadSafetyMode.NONE) { modData.isCrateRoot }
+    )
+    val files = collectResolveVariants(name) {
+        processModDeclResolveVariants(modDeclData, it)
+    }
+    return files.singleOrNull() as RsFile?
+}
+
+/** Have to pass [pathAttribute], because [RsFile.pathAttribute] triggers resolve */
+private fun RsMod.getOwnedDirectory(parentMod: ModData, pathAttribute: String?): PsiDirectory? {
+    if (this is RsFile && name == RsConstants.MOD_RS_FILE) return parent
+
+    val (parentDirectory, path) = if (pathAttribute != null) {
+        val parentDirectory = if (parentMod.isRsFile) {
+            parentMod.asPsiFile(project)?.parent
+        } else {
+            parentMod.getOwnedDirectory(project)
+        }
+        parentDirectory to pathAttribute
+    } else {
+        parentMod.getOwnedDirectory(project) to name
+    }
+    if (parentDirectory == null || path == null) return null
+
+    // Don't use `FileUtil#getNameWithoutExtension` to correctly process relative paths like `./foo`
+    val directoryPath = FileUtil.toSystemIndependentName(path).removeSuffix(".${RsFileType.defaultExtension}")
+    return parentDirectory.virtualFile
+        .findFileByMaybeRelativePath(directoryPath)
+        ?.let(parentDirectory.manager::findDirectory)
 }

@@ -69,14 +69,16 @@ private class AsyncCrateDefMapBuilder(
             buildImpl()
         }
 
-        val totalTime = tasksTimes.values.sum()
-        println("wallTime: $wallTime, totalTime: $totalTime, " +
-            "parallelism coefficient: ${"%.2f".format((totalTime.toDouble() / wallTime))}")
-        val top5crates = tasksTimes.entries
-            .sortedByDescending { (_, time) -> time }
-            .take(5)
-            .joinToString { (crate, time) -> "$crate ${time}ms" }
-        println("Top 5 crates: $top5crates")
+        if (wallTime > 2000) {
+            val totalTime = tasksTimes.values.sum()
+            println("wallTime: $wallTime, totalTime: $totalTime, " +
+                "parallelism coefficient: ${"%.2f".format((totalTime.toDouble() / wallTime))}")
+            val top5crates = tasksTimes.entries
+                .sortedByDescending { (_, time) -> time }
+                .take(5)
+                .joinToString { (crate, time) -> "$crate ${time}ms" }
+            println("Top 5 crates: $top5crates")
+        }
     }
 
     fun buildImpl() {
