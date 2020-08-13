@@ -8,6 +8,7 @@ package org.rustPerformanceTests
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.RecursionManager
 import com.intellij.psi.util.PsiModificationTracker
+import org.apache.commons.lang3.ObjectUtils
 import org.rust.lang.core.macros.MacroExpansionScope
 import org.rust.lang.core.macros.macroExpansionManager
 import org.rust.lang.core.psi.ext.RsReferenceElement
@@ -19,7 +20,6 @@ import org.rust.lang.core.resolve2.timesBuildDefMaps
 import org.rust.stdext.Timings
 import org.rust.stdext.repeatBenchmark
 import java.util.concurrent.Executors
-import kotlin.math.min
 import kotlin.system.measureTimeMillis
 
 // todo другое имя ?
@@ -73,13 +73,16 @@ class RsHighlightingPerformanceTest : RsRealProjectTestBase() {
 
     private fun profileResolve(timings: Timings) {
         val references = collectReferences(timings)
-        var timeMin = Long.MAX_VALUE
+        val times = mutableListOf<Long>()
         for (i in 0..Int.MAX_VALUE) {
             val time = measureTimeMillis {
                 references.forEach { it.reference?.resolve() }
             }
-            timeMin = min(timeMin, time)
-            println("Resolved all file references in $time ms  (min time is $timeMin ms)")
+            times += time
+
+            val timeMin = times.min()
+            val timeMedian = ObjectUtils.median(*times.toTypedArray())
+            println("Resolved all file references in $time ms  (min = $timeMin ms, median = $timeMedian ms)")
             project.rustPsiManager.incRustStructureModificationCount()
         }
     }

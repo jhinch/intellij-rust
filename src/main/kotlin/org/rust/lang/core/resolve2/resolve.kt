@@ -6,13 +6,16 @@
 package org.rust.lang.core.resolve2
 
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapiext.isUnitTestMode
 import org.rust.cargo.project.workspace.CargoWorkspace
 import org.rust.lang.core.crate.CratePersistentId
 import org.rust.lang.core.psi.RsEnumVariant
+import org.rust.lang.core.psi.RsFile
 import org.rust.lang.core.psi.ext.RsMod
 import org.rust.lang.core.psi.ext.containingCrate
 import org.rust.lang.core.psi.ext.superMods
 import org.rust.lang.core.resolve.Namespace
+import org.rust.openapiext.fileId
 
 class DefDatabase(
     /** `DefMap`s for some crate and all its dependencies (including transitive) */
@@ -40,6 +43,8 @@ class DefDatabase(
     }
 }
 
+typealias FileId = Int
+
 // todo вынести поля нужные только на этапе построения в collector ?
 class CrateDefMap(
     val crate: CratePersistentId,
@@ -53,7 +58,11 @@ class CrateDefMap(
     var prelude: ModData?,
     val crateDescription: String  // only for debug
 ) {
+    // todo сделать DefDatabase интерфейсом и использовать другую реализацию (которая вызывает `crate.defMap`) после построения текущий DefMap ?
     val defDatabase: DefDatabase = DefDatabase(allDependenciesDefMaps + (crate to this))
+
+    /** Optimization for [getModData] */
+    private val modDataByFileId: MutableMap<FileId, ModData> = hashMapOf()
 
     fun getModData(modPath: ModPath): ModData? {
         check(crate == modPath.crate)
@@ -64,7 +73,26 @@ class CrateDefMap(
 
     // todo move to facade.rs вместе с ModPath.fromMod
     fun getModData(mod: RsMod): ModData? {
-        mod.containingCrate?.id?.let { check(it == crate) }  // todo
+        if (isUnitTestMode) {
+            mod.containingCrate?.id?.let { check(it == crate) }  // todo
+        }
+        return getModDataFast(mod)
+    }
+
+    private fun getModDataFast(mod: RsMod): ModData? {
+        if (mod is RsFile) {
+            val virtualFile = mod.originalFile.virtualFile ?: run {
+                check(isUnitTestMode)  // todo
+                return getModDataSlow(mod)
+            }
+            return modDataByFileId[virtualFile.fileId]
+        }
+        val parentMod = mod.`super` ?: return null
+        val parentModData = getModDataFast(parentMod) ?: return null
+        return parentModData.childModules[mod.modName]
+    }
+
+    private fun getModDataSlow(mod: RsMod): ModData? {
         val modPath = ModPath.fromMod(mod, crate) ?: return null
         return getModData(modPath)
     }
@@ -90,6 +118,21 @@ class CrateDefMap(
         }
     }
 
+    /** Called after resolving imports and expanding macros */
+    fun onBuildFinish() {
+        fun visitSubtree(modData: ModData, visitor: (ModData) -> Unit) {
+            visitor(modData)
+            for (childModData in modData.childModules.values) {
+                visitSubtree(childModData, visitor)
+            }
+        }
+        visitSubtree(root) {
+            if (it.isRsFile) {
+                modDataByFileId[it.fileId] = it
+            }
+        }
+    }
+
     override fun toString(): String = crateDescription
 }
 
@@ -101,11 +144,11 @@ class ModData(
     val path: ModPath,
     val isEnabledByCfg: Boolean,
     /** id of containing file */
-    val fileId: Int,
+    val fileId: FileId,
     // todo тип? String / List<String> / ModPath
     val fileRelativePath: String,  // starts with ::
     /** `fileId` of owning directory */
-    val ownedDirectoryId: Int?,
+    val ownedDirectoryId: FileId?,
     val isEnum: Boolean = false
 ) {
     val name: String get() = path.name
@@ -307,7 +350,7 @@ sealed class Visibility {
 data class ModPath(
     val crate: CratePersistentId,
     val segments: List<String>
-    // val fileId: Int,  // id of containing file
+    // val fileId: FileId,  // id of containing file
     // val fileRelativePath: String  // empty for pathRsFile
 ) {
     val path: String get() = segments.joinToString("::")
@@ -319,6 +362,7 @@ data class ModPath(
     override fun toString(): String = path.ifEmpty { "crate" }
 
     companion object {
+        // todo remove ?
         fun fromMod(mod: RsMod, crate: CratePersistentId): ModPath? {
             val segments = mod.superMods
                 .asReversed().drop(1)

@@ -61,7 +61,7 @@ private class AsyncCrateDefMapBuilder(
         .toMutableMap()
     private val remainingNumberCrates: CountDownLatch = CountDownLatch(topSortedCrates.size)
 
-    // for profiling
+    // only for profiling
     private val tasksTimes: MutableMap<Crate, Long> = ConcurrentHashMap()
 
     fun build() {
@@ -143,6 +143,7 @@ private fun buildCrateDefMapImpl(crate: Crate): CrateDefMap? {
         return null
     }
     DefCollector(project, defMap, crateInfo).collect()
+    defMap.onBuildFinish()
     return defMap
 }
 
@@ -292,7 +293,7 @@ private fun ModData.toRsEnum(project: Project): RsEnumItem? {
 }
 
 // todo assert not null / log warning
-fun ModData.toRsMod(project: Project, useExpandedItems: Boolean = true): RsMod? {
+fun ModData.toRsMod(project: Project, useExpandedItems /* todo remove (always true) */: Boolean = true): RsMod? {
     if (isEnum) return null
     val file = PersistentFS.getInstance().findFileById(fileId)
         ?.toPsiFile(project) as? RsFile
