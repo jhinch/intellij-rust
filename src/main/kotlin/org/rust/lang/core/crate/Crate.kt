@@ -5,6 +5,7 @@
 
 package org.rust.lang.core.crate
 
+import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.vfs.VirtualFile
 import org.rust.cargo.CfgOptions
 import org.rust.cargo.project.model.CargoProject
@@ -90,7 +91,7 @@ interface Crate {
     // todo docs
     val defMap: CrateDefMap?
 
-    fun updateDefMap() {}
+    fun updateDefMap(indicator: ProgressIndicator) {}
 }
 
 fun Crate.findDependency(normName: String): Crate? =

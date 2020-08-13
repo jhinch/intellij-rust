@@ -24,7 +24,6 @@ import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.util.containers.ContainerUtil
 import com.intellij.util.io.storage.HeavyProcessLatch
 import org.rust.RsTask
-import org.rust.ide.experiments.RsExperiments
 import org.rust.lang.core.psi.RsMacroCall
 import org.rust.lang.core.psi.RsMembers
 import org.rust.lang.core.psi.ext.RsMod
@@ -81,12 +80,6 @@ abstract class MacroExpansionTaskBase(
         indicator.isIndeterminate = false
         realTaskIndicator = indicator
 
-        if (IS_NEW_RESOLVE_ENABLED) {
-            buildCrateDefMapForAllCrates(project, pool)
-        }
-
-        expansionSteps = getMacrosToExpand(dumbService).iterator()
-
         if (indicator is ProgressIndicatorEx) {
             // [indicator] can be an instance of [BackgroundableProcessIndicator] class, which is thread
             // sensitive and its `checkCanceled` method should be used only from a single thread
@@ -98,6 +91,12 @@ abstract class MacroExpansionTaskBase(
         } else {
             subTaskIndicator = indicator
         }
+
+        if (IS_NEW_RESOLVE_ENABLED) {
+            buildCrateDefMapForAllCrates(project, pool, subTaskIndicator)
+        }
+
+        expansionSteps = getMacrosToExpand(dumbService).iterator()
 
         indicator.checkCanceled()
         var heavyProcessToken: AccessToken? = null

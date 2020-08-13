@@ -5,6 +5,7 @@
 
 package org.rust.lang.core.resolve2
 
+import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.io.FileUtil
 import com.intellij.openapi.vfs.newvfs.persistent.PersistentFS
@@ -30,21 +31,23 @@ import org.rust.lang.core.resolve.processModDeclResolveVariants
 import org.rust.openapiext.*
 import kotlin.test.assertEquals
 
-// todo придумать имя получше?
-/** Contains static information of all explicitly declared imports and macros */
-class CrateInfo(val crate: Crate) {
+// todo move to facade ?
+class CollectorContext(
+    val crate: Crate,
+    val indicator: ProgressIndicator
+) {
     val project: Project = crate.cargoProject.project
+    /** All explicit imports (not expanded from macros) */
     val imports: MutableList<Import> = mutableListOf()
+    /** All explicit macro calls  */
     val macroCalls: MutableList<MacroCallInfo> = mutableListOf()
 }
 
-fun buildCrateDefMapContainingExplicitItems(
-    crate: Crate,
-    // have to pass `crate.id` and `crate.rootModule` as parameters,
-    // because we want check them for null earlier
-    crateId: CratePersistentId,
-    crateRoot: RsFile
-): Pair<CrateDefMap, CrateInfo> {
+fun buildCrateDefMapContainingExplicitItems(context: CollectorContext): CrateDefMap? {
+    val crate = context.crate
+    val crateId = crate.id ?: return null
+    val crateRoot = crate.rootMod ?: return null
+
     val externPrelude = getInitialExternPrelude(crate)
     val directDependenciesDefMaps = crate.dependencies
         .mapNotNull {
@@ -91,18 +94,17 @@ fun buildCrateDefMapContainingExplicitItems(
         crate.toString()
     )
 
-    val crateInfo = CrateInfo(crate)
-    val collector = ModCollector(crateRootData, defMap, crateRootData, crateInfo)
+    val collector = ModCollector(crateRootData, defMap, crateRootData, context)
     createExternCrateStdImport(crateRoot, crateRootData)?.let {
-        crateInfo.imports += it
+        context.imports += it
         collector.importExternCrateMacros(it.usePath)
     }
     collector.collectElements(crateRoot)
 
-    removeInvalidImportsAndMacroCalls(defMap, crateInfo)
-    crateInfo.imports  // imports from nested modules first
+    removeInvalidImportsAndMacroCalls(defMap, context)
+    context.imports  // imports from nested modules first
         .sortByDescending { import -> import.usePath.split("::").size }
-    return Pair(defMap, crateInfo)
+    return defMap
 }
 
 private fun getInitialExternPrelude(crate: Crate): MutableMap<String, ModData> {
@@ -119,20 +121,20 @@ private fun getInitialExternPrelude(crate: Crate): MutableMap<String, ModData> {
  * It could happen if there is cfg-disabled module, which we collect first (with its imports)
  * And then cfg-enabled module overrides previously created [ModData]
  */
-fun removeInvalidImportsAndMacroCalls(defMap: CrateDefMap, crateInfo: CrateInfo) {
+fun removeInvalidImportsAndMacroCalls(defMap: CrateDefMap, context: CollectorContext) {
     fun ModData.descendantsMods(): Sequence<ModData> =
         sequenceOf(this) + childModules.values.asSequence().flatMap { it.descendantsMods() }
 
     val allMods = defMap.root.descendantsMods().toSet()
-    crateInfo.imports.removeIf { it.containingMod !in allMods }
-    crateInfo.macroCalls.removeIf { it.containingMod !in allMods }
+    context.imports.removeIf { it.containingMod !in allMods }
+    context.macroCalls.removeIf { it.containingMod !in allMods }
 }
 
 class ModCollector(
     private val modData: ModData,
     private val defMap: CrateDefMap,
     private val crateRoot: ModData,
-    private val crateInfo: CrateInfo,
+    private val context: CollectorContext,
     private val macroDepth: Int = 0,
     /**
      * called when new [RsItemElement] is found
@@ -144,9 +146,9 @@ class ModCollector(
         { containingMod, name, perNs -> containingMod.addVisibleItem(name, perNs) }
 ) {
 
-    private val imports: MutableList<Import> get() = crateInfo.imports
-    private val crate: Crate get() = crateInfo.crate
-    private val project: Project get() = crateInfo.project
+    private val imports: MutableList<Import> get() = context.imports
+    private val crate: Crate get() = context.crate
+    private val project: Project get() = context.project
 
     /** [itemsOwner] - [RsMod] or [RsForeignModItem] */
     fun collectElements(itemsOwner: RsItemsOwner) = collectElements(itemsOwner.itemsAndMacros.toList())
@@ -288,6 +290,7 @@ class ModCollector(
         isEnabledByCfg: Boolean,
         pathAttribute: String?
     ): ModData {
+        context.indicator.checkCanceled()
         val childModPath = modData.path.append(childModName)
         val (fileId, fileRelativePath) = if (childMod is RsFile) {
             childMod.virtualFile.fileId to ""
@@ -307,7 +310,7 @@ class ModCollector(
         // todo не делать если вызывается из expandMacros ?
         childModData.legacyMacros += modData.legacyMacros
 
-        val collector = ModCollector(childModData, defMap, crateRoot, crateInfo)
+        val collector = ModCollector(childModData, defMap, crateRoot, context)
         collector.collectElements(childMod)
         return childModData
     }
@@ -345,7 +348,7 @@ class ModCollector(
         val pathAdjusted = adjustPathWithDollarCrate(path, dollarCrateId)
         val macroDef = if (path.contains("::")) null else modData.legacyMacros[path]
         val dollarCrateMap = call.getUserData(RESOLVE_RANGE_MAP_KEY) ?: RangeMap.EMPTY
-        crateInfo.macroCalls += MacroCallInfo(modData, pathAdjusted, body, macroDepth, macroDef, dollarCrateMap)
+        context.macroCalls += MacroCallInfo(modData, pathAdjusted, body, macroDepth, macroDef, dollarCrateMap)
     }
 
     private fun collectMacro(macro: RsMacro) {

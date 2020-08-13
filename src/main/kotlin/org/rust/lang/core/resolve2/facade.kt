@@ -7,8 +7,10 @@ package org.rust.lang.core.resolve2
 
 import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer
 import com.intellij.openapi.application.runReadAction
+import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.newvfs.persistent.PersistentFS
+import com.intellij.openapiext.isUnitTestMode
 import org.rust.ide.utils.isEnabledByCfg
 import org.rust.lang.core.crate.Crate
 import org.rust.lang.core.crate.crateGraph
@@ -20,129 +22,50 @@ import org.rust.lang.core.resolve.*
 import org.rust.lang.core.resolve.ItemProcessingMode.WITHOUT_PRIVATE_IMPORTS
 import org.rust.lang.core.resolve2.Visibility.CfgDisabled
 import org.rust.openapiext.toPsiFile
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executor
 import kotlin.system.measureTimeMillis
 
 val IS_NEW_RESOLVE_ENABLED: Boolean = true
 // val IS_NEW_RESOLVE_ENABLED: Boolean = isFeatureEnabled(RsExperiments.RESOLVE_NEW)
 
-fun buildCrateDefMapForAllCrates(project: Project, pool: Executor, async: Boolean = true) {
+fun buildCrateDefMapForAllCrates(
+    project: Project,
+    pool: Executor,
+    indicator: ProgressIndicator,
+    async: Boolean = true
+) {
+    indicator.checkCanceled()
     val crateGraph = project.crateGraph
     val topSortedCrates = runReadAction { crateGraph.topSortedCrates }
     if (topSortedCrates.isEmpty()) return
 
-    // println("\trunNameResolution")
+    println("\tbuildCrateDefMapForAllCrates")
     (crateGraph as CrateGraphServiceImpl).crateDefMaps.clear()  // todo
     val time = measureTimeMillis {
         if (async) {
-            AsyncCrateDefMapBuilder(pool, topSortedCrates).build()
+            AsyncCrateDefMapBuilder(pool, topSortedCrates, indicator).build()
         } else {
             for (crate in topSortedCrates) {
-                crate.updateDefMap()
+                crate.updateDefMap(indicator)
             }
         }
     }
     timesBuildDefMaps += time
     RESOLVE_LOG.info("Created DefMap for all crates in $time milliseconds")
 
+    indicator.checkCanceled()
     project.rustPsiManager.incRustStructureModificationCount()
     DaemonCodeAnalyzer.getInstance(project).restart()
 }
 
-private class AsyncCrateDefMapBuilder(
-    private val pool: Executor,
-    topSortedCrates: List<Crate>
-) {
-    /** Values - number of dependencies for which [CrateDefMap] is not build yet */
-    private val remainingDependenciesCounts: MutableMap<Crate, Int> = topSortedCrates
-        .associateWith { it.dependencies.size }
-        .toMutableMap()
-    private val remainingNumberCrates: CountDownLatch = CountDownLatch(topSortedCrates.size)
-
-    // only for profiling
-    private val tasksTimes: MutableMap<Crate, Long> = ConcurrentHashMap()
-
-    fun build() {
-        val wallTime = measureTimeMillis {
-            buildImpl()
-        }
-
-        if (wallTime > 2000) {
-            val totalTime = tasksTimes.values.sum()
-            println("wallTime: $wallTime, totalTime: $totalTime, " +
-                "parallelism coefficient: ${"%.2f".format((totalTime.toDouble() / wallTime))}")
-            val top5crates = tasksTimes.entries
-                .sortedByDescending { (_, time) -> time }
-                .take(5)
-                .joinToString { (crate, time) -> "$crate ${time}ms" }
-            println("Top 5 crates: $top5crates")
-        }
-    }
-
-    fun buildImpl() {
-        remainingDependenciesCounts
-            .filterValues { it == 0 }
-            .keys
-            .forEach { buildCrateDefMapAsync(it) }
-        remainingNumberCrates.await()
-    }
-
-    private fun buildCrateDefMapAsync(crate: Crate) {
-        pool.execute {
-            try {
-                tasksTimes[crate] = measureTimeMillis {
-                    crate.updateDefMap()
-                }
-            } catch (e: Exception) {
-                try {
-                    RESOLVE_LOG.error(e)
-                } catch (e: AssertionError) {
-                    // ignored
-                }
-            }
-            onCrateFinished(crate)
-        }
-    }
-
-    @Synchronized
-    private fun onCrateFinished(crate: Crate) {
-        crate.reverseDependencies.forEach { onDependencyCrateFinished(it) }
-        remainingNumberCrates.countDown()
-    }
-
-    private fun onDependencyCrateFinished(crate: Crate) {
-        var count = remainingDependenciesCounts.getValue(crate)
-        count -= 1
-        remainingDependenciesCounts[crate] = count
-        if (count == 0) {
-            buildCrateDefMapAsync(crate)
-        }
-    }
-}
-
-fun buildCrateDefMap(crate: Crate): CrateDefMap? {
-    // println("Building DefMap for $crate")
-    var defMap: CrateDefMap? = null
-    val time = measureTimeMillis { defMap = buildCrateDefMapImpl(crate) }
-    // println("Building DefMap for $crate - finished in $time milliseconds")
-    return defMap
-}
-
-private fun buildCrateDefMapImpl(crate: Crate): CrateDefMap? {
+fun buildCrateDefMap(crate: Crate, indicator: ProgressIndicator): CrateDefMap? {
     RESOLVE_LOG.info("Building DefMap for $crate")
     val project = crate.cargoProject.project
-    val (defMap, crateInfo) = runReadAction {
-        // todo inline into buildCrateDefMapContainingExplicitItems ?
-        val crateId = crate.id ?: return@runReadAction null
-        val crateRoot = crate.rootMod ?: return@runReadAction null
-        buildCrateDefMapContainingExplicitItems(crate, crateId, crateRoot)
-    } ?: run {
-        RESOLVE_LOG.info("null DefMap for crate $crate")
-        return null
-    }
-    DefCollector(project, defMap, crateInfo).collect()
+    val context = CollectorContext(crate, indicator)
+    val defMap = runReadAction {
+        buildCrateDefMapContainingExplicitItems(context)
+    } ?: return null
+    DefCollector(project, defMap, context).collect()
     defMap.onBuildFinish()
     return defMap
 }
@@ -156,7 +79,12 @@ fun processItemDeclarations2(
     val project = scope.project
     val crate = scope.containingCrate ?: return false
     check(crate !is DoctestCrate) { "doc test crates are not supported by CrateDefMap" }
-    val defMap = crate.defMap ?: error("defMap is null for $crate during resolve")
+    val defMap = crate.defMap ?: run {
+        // todo
+        if (isUnitTestMode) error("defMap is null for $crate during resolve")
+        println("defMap is null for $crate during resolve")
+        return false
+    }
     // todo optimization: добавить в CrateDefMap мапку из fileId в ModData
     val modData = defMap.getModData(scope) ?: return false
 
@@ -274,7 +202,7 @@ private fun VisItem.toPsi(defDatabase: DefDatabase, project: Project, ns: Namesp
 private inline fun <reified T : RsElement> Collection<T>.singleOrCfgEnabled(): T? =
     singleOrNull() ?: singleOrNull { it.isEnabledByCfg }
 
-fun ModPath.toRsModOrEnum(defDatabase: DefDatabase, project: Project): RsNamedElement? /* RsMod or RsEnumItem */ {
+private fun ModPath.toRsModOrEnum(defDatabase: DefDatabase, project: Project): RsNamedElement? /* RsMod or RsEnumItem */ {
     val modData = defDatabase.getModData(this) ?: return null
     return if (modData.isEnum) {
         modData.toRsEnum(project)
@@ -293,7 +221,7 @@ private fun ModData.toRsEnum(project: Project): RsEnumItem? {
 }
 
 // todo assert not null / log warning
-fun ModData.toRsMod(project: Project, useExpandedItems /* todo remove (always true) */: Boolean = true): RsMod? {
+private fun ModData.toRsMod(project: Project, useExpandedItems /* todo remove (always true) */: Boolean = true): RsMod? {
     if (isEnum) return null
     val file = PersistentFS.getInstance().findFileById(fileId)
         ?.toPsiFile(project) as? RsFile

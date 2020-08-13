@@ -27,18 +27,17 @@ import org.rust.openapiext.toPsiFile
 class DefCollector(
     private val project: Project,
     private val defMap: CrateDefMap,
-    private val crateInfo: CrateInfo
+    private val context: CollectorContext
 ) {
-
     /**
      * Reversed glob-imports graph, that is
      * for each module (`targetMod`) store all modules which contain glob import to `targetMod`
      */
     private val globImports: MutableMap<ModData, MutableList<Pair<ModData, Visibility>>> = hashMapOf()
-    private val unresolvedImports: MutableList<Import> = crateInfo.imports
+    private val unresolvedImports: MutableList<Import> = context.imports
     private val resolvedImports: MutableList<Import> = mutableListOf()
 
-    private val macroCallsToExpand: MutableList<MacroCallInfo> = crateInfo.macroCalls
+    private val macroCallsToExpand: MutableList<MacroCallInfo> = context.macroCalls
 
     /**
      * For each module records names which come from glob-imports
@@ -64,6 +63,7 @@ class DefCollector(
         var hasChangedImports = true
         while (hasChangedImports) {
             hasChangedImports = unresolvedImports.removeIf { import ->
+                context.indicator.checkCanceled()
                 import.status = resolveImport(import)
                 when (import.status) {
                     is Indeterminate -> {
@@ -260,6 +260,7 @@ class DefCollector(
         val macroCallsCurrent = macroCallsToExpand.toMutableList()
         macroCallsToExpand.clear()
         val changed = macroCallsCurrent.removeIf { call ->
+            context.indicator.checkCanceled()
             if (call.path == "include") {
                 expandIncludeMacroCall(call)
                 return@removeIf true
@@ -402,7 +403,7 @@ class DefCollector(
             val visibility = (perNs.types ?: perNs.values ?: perNs.macros)!!.visibility
             update(modData, listOf(name to perNs), visibility, NAMED)
         }
-        val collector = ModCollector(containingMod, defMap, defMap.root, crateInfo, macroDepth, onAddItem)
+        val collector = ModCollector(containingMod, defMap, defMap.root, context, macroDepth, onAddItem)
         collector.collectExpandedItems(items)
     }
 }

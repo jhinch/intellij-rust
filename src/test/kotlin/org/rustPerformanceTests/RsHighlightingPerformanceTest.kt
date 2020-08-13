@@ -5,6 +5,7 @@
 
 package org.rustPerformanceTests
 
+import com.intellij.openapi.progress.EmptyProgressIndicator
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.RecursionManager
 import com.intellij.psi.util.PsiModificationTracker
@@ -67,7 +68,8 @@ class RsHighlightingPerformanceTest : RsRealProjectTestBase() {
     private fun profileBuildDefMaps(timings: Timings) {
         for (i in 0..Int.MAX_VALUE) {
             val pool = Executors.newWorkStealingPool()
-            buildCrateDefMapForAllCrates(project, pool, async = true)
+            val indicator = EmptyProgressIndicator()
+            buildCrateDefMapForAllCrates(project, pool, indicator, async = true)
         }
     }
 

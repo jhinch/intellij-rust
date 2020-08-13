@@ -5,6 +5,9 @@
 
 package org.rust.lang.core.crate.impl
 
+import com.intellij.openapi.progress.EmptyProgressIndicator
+import com.intellij.openapi.progress.ProgressIndicator
+import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.util.CachedValueProvider
 import org.rust.cargo.CfgOptions
@@ -22,6 +25,7 @@ import org.rust.lang.core.resolve2.CrateDefMap
 import org.rust.lang.core.resolve2.buildCrateDefMap
 import org.rust.openapiext.CachedValueDelegate
 import org.rust.openapiext.fileId
+import org.rust.openapiext.testAssert
 import org.rust.openapiext.toPsiFile
 import java.util.*
 
@@ -71,38 +75,36 @@ class CargoBasedCrate(
             return if (isMacroExpansionEnabled) {
                 val crateGraphService = cargoProject.project.crateGraph as CrateGraphServiceImpl  // todo
                 val id = id ?: return null
-                check(id in crateGraphService.crateDefMaps) { "DefMap for crate $this is not yet computed" }
+                testAssert({ id in crateGraphService.crateDefMaps }, { "DefMap for crate $this is not yet computed" })
                 return crateGraphService.crateDefMaps[id]
             } else {
-                defMapLazy
+                synchronized(defMapLazyLock) {
+                    defMapLazy
+                }
             }
         }
 
-    // non-lazy - if macro expansion is enabled
+    /** non-lazy - if macro expansion is enabled */
     @Volatile
     private var isComputingDefMap: Boolean = false
-    override fun updateDefMap() {
+    override fun updateDefMap(indicator: ProgressIndicator) {
         check(!isComputingDefMap) { "Attempt to compute defMap for $this while it is being computed" }
         isComputingDefMap = true
         try {
             val crateGraphService = cargoProject.project.crateGraph as CrateGraphServiceImpl
             val crateId = id ?: return
-            val defMap = buildCrateDefMap(this)
+            val defMap = buildCrateDefMap(this, indicator)
             crateGraphService.crateDefMaps[crateId] = defMap
         } finally {
             isComputingDefMap = false
         }
     }
 
-    // lazy - if macro expansion is disabled
+    /** lazy - if macro expansion is disabled */
+    private val defMapLazyLock: Any = Any()
     private val defMapLazy: CrateDefMap? by CachedValueDelegate {
-        check(!isComputingDefMap) { "Attempt to compute defMap for $this while it is being computed" }
-        isComputingDefMap = true
-        val result = try {
-            buildCrateDefMap(this)
-        } finally {
-            isComputingDefMap = false
-        }
+        val indicator = ProgressManager.getInstance().progressIndicator ?: EmptyProgressIndicator()
+        val result = buildCrateDefMap(this, indicator)
         // todo use tracker for changes only in this crate
         CachedValueProvider.Result(result, cargoProject.project.rustStructureModificationTracker)
     }
