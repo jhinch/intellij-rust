@@ -61,7 +61,7 @@ class AsyncCrateDefMapBuilder(
                 tasksTimes[crate] = measureTimeMillis {
                     crate.updateDefMap(indicator)
                 }
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 completableFuture.completeExceptionally(e)
                 return@execute
             }

@@ -217,9 +217,9 @@ val RsDocAndAttributeOwner.isCfgUnknownSelf: Boolean
     get() = evaluateCfg() == ThreeValuedLogic.Unknown
 
 /**
- * [crateOrNull] is passed because it is used in resolve2 during building [CrateDefMap]
+ * [crateOrNull] is passed because it is used in Resolve2 during building [CrateDefMap]
  * so we can't use [containingCrate] because it will traverse [superMods],
- * but expanded elements in resolve2 don't have correct [superMods]
+ * but expanded elements in Resolve2 don't have correct [superMods]
  * */
 private fun RsDocAndAttributeOwner.evaluateCfg(crateOrNull: Crate? = null): ThreeValuedLogic {
     if (!CFG_ATTRIBUTES_ENABLED_KEY.asBoolean()) return ThreeValuedLogic.True

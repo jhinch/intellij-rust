@@ -21,6 +21,7 @@ import org.rust.lang.core.resolve2.ImportType.NAMED
 import org.rust.lang.core.resolve2.PartialResolvedImport.*
 import org.rust.lang.core.resolve2.Visibility.Invisible
 import org.rust.openapiext.findFileByMaybeRelativePath
+import org.rust.openapiext.testAssert
 import org.rust.openapiext.toPsiFile
 
 /** Resolves all imports (and adds to [defMap]) using fixed point iteration algorithm */
@@ -314,26 +315,28 @@ class DefCollector(
         call: MacroCallInfo,
         macro: MacroInfo,
         expandedText: CharSequence,
-        ranges: RangeMap,
+        ranges: RangeMap,  // between `call.body` and `expandedText`
         expansion: MacroExpansion
     ) {
+        val occurrencesInFile = Regex(MACRO_DOLLAR_CRATE_IDENTIFIER).findAll(expandedText).map { it.range.first }
         // для каждого occurrence IntellijRustDollarCrate в `expandedText` ищем crateId
-        val rangesInFile = Regex(MACRO_DOLLAR_CRATE_IDENTIFIER).findAll(expandedText).associate { match ->
-            val indexInExpandedText = match.range.first
+        val rangesInFile = occurrencesInFile.associateWith { indexInExpandedText ->
             val indexInCallBody = ranges.mapOffsetFromExpansionToCallBody(indexInExpandedText)
             val crateId: CratePersistentId = if (indexInCallBody != null) {
-                check(
-                    call.body.subSequence(indexInCallBody, indexInCallBody + MACRO_DOLLAR_CRATE_IDENTIFIER.length)
-                        == MACRO_DOLLAR_CRATE_IDENTIFIER
-                )
+                testAssert {
+                    val fragmentInCallBody = call.body
+                        .subSequence(indexInCallBody, indexInCallBody + MACRO_DOLLAR_CRATE_IDENTIFIER.length)
+                    fragmentInCallBody == MACRO_DOLLAR_CRATE_IDENTIFIER
+                }
                 call.dollarCrateMap.mapOffsetFromExpansionToCallBody(indexInCallBody)
+                // todo only log error
                     ?: error("Unexpected macro expansion. Macro call: '$call', expansion: '$expandedText'")
             } else {
-                // todo нужно использовать RangeMap между expandedText и телом макроса (macro_rules)
+                // TODO: Нужно использовать RangeMap между expandedText и телом макроса (macro_rules)
                 //  в теле макроса может быть IntellijRustDollarCrate (а не только $crate)
                 macro.crate
             }
-            indexInExpandedText to crateId
+            crateId
         }
 
         fun filterRangesInside(range: TextRange): Map<Int, CratePersistentId> =
@@ -349,7 +352,10 @@ class DefCollector(
         // - UseItem - если начинается с $crate
         // - MacroCall - если начинается с $crate или если body содержит $crate
         // - Macro - если body содержит $crate
-        loop@ for (element in expansion.elements) {
+        // todo: мб лучше вместо цикла по всем descendantsOfType перебирать rangesInFile и явно искать top level element ?
+        //     - для путей внутри RsUseItem и RsMacroCall можно и не искать, просто использовать их userData
+        //     - для RsMacroCall body можно делать parentOfType<RsMacroCall>()
+        loop@ for (element in expansion.file.descendantsOfType<RsElement>()) {
             when (element) {
                 is RsUseItem -> {
                     // expandedText = 'use $crate::foo;'

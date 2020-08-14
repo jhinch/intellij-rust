@@ -269,8 +269,8 @@ class RsMacroExpansionResolveTest : RsResolveTestBase() {
         }       //^
     """)
 
-    // In second version of test (here and below) macro is expanded to import.
-    // We need to test it because paths in imports are resolved using different code when resolve2 is enabled.
+    // We need to test macros expanded to import,
+    // because paths in imports are resolved using different code when Resolve2 is enabled.
     fun `test 'crate' metavar in same crate (macro expanded to import)`() = checkByCode("""
         fn func() {}
          //X
@@ -285,6 +285,41 @@ class RsMacroExpansionResolveTest : RsResolveTestBase() {
                 func();
             } //^
         }
+    """)
+
+    fun `test 'crate' metavar in same crate 1 (macro expanded to inline mod)`() = checkByCode("""
+        fn func() {}
+         //X
+
+        macro_rules! foo {
+            () => {
+                mod inner { pub use $ crate::func; }
+            }
+        }
+
+        foo!();
+        fn main() {
+            inner::func();
+        }        //^
+    """)
+
+    fun `test 'crate' metavar in same crate 2 (macro expanded to inline mod)`() = checkByCode("""
+        fn func() {}
+         //X
+
+        macro_rules! foo1 {
+            () => {
+                mod inner { foo2!($ crate::func); }
+            }
+        }
+        macro_rules! foo2 {
+            ($ path:path) => { use $ path; }
+        }
+
+        foo1!();
+        fn main() {
+            inner::func();
+        }        //^
     """)
 
     @ProjectDescriptor(WithDependencyRustProjectDescriptor::class)

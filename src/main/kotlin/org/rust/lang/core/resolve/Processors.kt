@@ -56,7 +56,7 @@ interface RsResolveProcessorBase<in T : ScopeEntry> {
 
     /**
      * Indicates that processor is interested only in [ScopeEntry] with specified [name].
-     * Improves performance for resolve2.
+     * Improves performance for Resolve2.
      * `null` in completion
      */
     val name: String?
