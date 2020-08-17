@@ -15,7 +15,6 @@ import com.intellij.execution.testframework.sm.ServiceMessageBuilder
 import com.intellij.execution.testframework.sm.runner.OutputToGeneralTestEventsConverter
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Key
-import com.intellij.openapi.util.text.StringUtil.unescapeStringCharacters
 import com.intellij.openapi.util.text.StringUtil.unquoteString
 import com.intellij.util.execution.ParametersListUtil
 import jetbrains.buildServer.messages.serviceMessages.ServiceMessageVisitor
@@ -119,8 +118,7 @@ class CargoTestEventsConverter(
                 // Parse `rustdoc` test name:
                 // src/lib.rs - qualifiedName (line #i) -> qualifiedName (line #i)
                 val qualifiedName = it.name.substringAfter(" - ")
-                val stdout = it.stdout?.let(::unescape)
-                it.copy(name = "$target::$qualifiedName", stdout = stdout)
+                it.copy(name = "$target::$qualifiedName")
             } ?: return false
         val messages = createServiceMessagesFor(testMessage) ?: return false
         for (message in messages) {
@@ -358,8 +356,8 @@ class CargoTestEventsConverter(
             val message = groups["message"]?.value ?: error("Failed to find `message` capturing group")
 
             val diff = if (groups["sign"]?.value == "==") {
-                val left = groups["left"]?.value?.let(::unescape)
-                val right = groups["right"]?.value?.let(::unescape)
+                val left = groups["left"]?.value?.let(::unquoteString)
+                val right = groups["right"]?.value?.let(::unquoteString)
                 if (left != null && right != null) DiffResult(left, right) else null
             } else {
                 null
@@ -392,8 +390,6 @@ class CargoTestEventsConverter(
         DOCTESTS_PACKAGE_NAME
     }
 }
-
-private fun unescape(s: String): String = unquoteString(unescapeStringCharacters(s))
 
 private data class FailedTestOutput(val stdout: String, val failedMessage: String)
 private data class ErrorMessage(val message: String, val diff: DiffResult?, val backtrace: String?)

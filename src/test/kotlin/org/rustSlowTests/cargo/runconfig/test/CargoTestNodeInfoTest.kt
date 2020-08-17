@@ -30,7 +30,7 @@ class CargoTestNodeInfoTest : CargoTestRunnerTestBase() {
 
     fun `test multiline string diff`() = checkErrors("""
        assert_eq!("a\naa", "bbb");
-    """, "", Diff("a\naa", "bbb"))
+    """, "", Diff("a\\naa", "bbb"))
 
     fun `test assert_eq with message`() = checkErrors("""
        assert_eq!(1, 2, "`1` != `2`");
@@ -52,26 +52,14 @@ class CargoTestNodeInfoTest : CargoTestRunnerTestBase() {
        assert_ne!(123, 123, "123 == 123");
     """, "123 == 123")
 
+    fun `test don't unescape error messages`() = checkErrors("""
+       assert_eq!("a\\\\b", "a\\b", "`a\\\\b` != `a\\b`");
+    """, "`a\\\\b` != `a\\b`")
+
     @MinRustcVersion("1.39.0")
-    fun `test successful output`() = checkOutput("""
-        println!("
-                   - ");
-    """,
-        output = """
-           - """,
-        shouldPass = true)
-
-    fun `test failed output`() = checkOutput("""
-        println!("
-                   - ");
-        panic!("
-                   - ");
-    """,
-        output = """
-           - 
-
-
-           - """)
+    fun `test don't unescape test output`() = checkOutput("""
+        println!("a\\\\b");
+    """, "a\\\\b")
 
     fun `test root output`() {
         val testProject = buildProject {
@@ -121,7 +109,7 @@ class CargoTestNodeInfoTest : CargoTestRunnerTestBase() {
         }
     }
 
-    private fun checkOutput(@Language("Rust") testFnText: String, output: String, shouldPass: Boolean = false) {
+    private fun checkOutput(@Language("Rust") testFnText: String, output: String, shouldPass: Boolean = true) {
         val testNode = getTestNode(testFnText, shouldPass)
         assertEquals(output, testNode.output.trimEnd('\n'))
     }
