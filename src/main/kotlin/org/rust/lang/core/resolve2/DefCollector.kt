@@ -338,6 +338,7 @@ class DefCollector(
             }
             crateId
         }
+        if (rangesInFile.isEmpty()) return
 
         fun filterRangesInside(range: TextRange): Map<Int, CratePersistentId> =
             rangesInFile.filterKeys { indexInFile ->

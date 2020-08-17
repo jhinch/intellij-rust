@@ -58,8 +58,12 @@ class CrateDefMap(
     var prelude: ModData?,
     val crateDescription: String  // only for debug
 ) {
-    // todo сделать DefDatabase интерфейсом и использовать другую реализацию (которая вызывает `crate.defMap`) после построения текущий DefMap ?
+    // todo сделать DefDatabase интерфейсом и использовать другую реализацию (которая вызывает `crate.defMap`) после построения текущей DefMap ?
     val defDatabase: DefDatabase = DefDatabase(allDependenciesDefMaps + (crate to this))
+
+    // todo move to DefMapService ?
+    // todo объединить с modDataByFileId ?
+    val fileModificationStamps: MutableMap<FileId, Long> = hashMapOf()
 
     /** Optimization for [getModData] */
     private val modDataByFileId: MutableMap<FileId, ModData> = hashMapOf()
@@ -118,8 +122,17 @@ class CrateDefMap(
         }
     }
 
+    fun addVisitedFile(file: RsFile) {
+        fileModificationStamps[file.virtualFile.fileId] = file.modificationStamp
+    }
+
     /** Called after resolving imports and expanding macros */
     fun onBuildFinish() {
+        // todo inline ?
+        fillModDataByFileId()
+    }
+
+    private fun fillModDataByFileId() {
         fun visitSubtree(modData: ModData, visitor: (ModData) -> Unit) {
             visitor(modData)
             for (childModData in modData.childModules.values) {

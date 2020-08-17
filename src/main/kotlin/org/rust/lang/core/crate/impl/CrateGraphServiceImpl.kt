@@ -25,13 +25,11 @@ import org.rust.cargo.project.workspace.PackageOrigin
 import org.rust.lang.core.crate.Crate
 import org.rust.lang.core.crate.CrateGraphService
 import org.rust.lang.core.crate.CratePersistentId
-import org.rust.lang.core.resolve2.CrateDefMap
 import org.rust.openapiext.CachedValueDelegate
 import org.rust.openapiext.checkReadAccessAllowed
 import org.rust.stdext.enumSetOf
 import org.rust.stdext.exhaustive
 import java.nio.file.Path
-import java.util.concurrent.ConcurrentHashMap
 
 class CrateGraphServiceImpl(val project: Project) : CrateGraphService {
 
@@ -65,9 +63,6 @@ class CrateGraphServiceImpl(val project: Project) : CrateGraphService {
         checkReadAccessAllowed()
         return if (rootModFile is VirtualFileWithId) findCrateById(rootModFile.id) else null
     }
-
-    // `null` value means there was attempt to build DefMap
-    val crateDefMaps: MutableMap<CratePersistentId, CrateDefMap?> = ConcurrentHashMap()
 }
 
 private data class CrateGraph(

@@ -16,7 +16,7 @@ import org.rust.lang.core.psi.ext.RsReferenceElement
 import org.rust.lang.core.psi.ext.descendantsOfType
 import org.rust.lang.core.psi.rustPsiManager
 import org.rust.lang.core.resolve2.IS_NEW_RESOLVE_ENABLED
-import org.rust.lang.core.resolve2.buildCrateDefMapForAllCrates
+import org.rust.lang.core.resolve2.buildDefMapForAllCrates
 import org.rust.lang.core.resolve2.timesBuildDefMaps
 import org.rust.stdext.Timings
 import org.rust.stdext.repeatBenchmark
@@ -69,7 +69,7 @@ class RsHighlightingPerformanceTest : RsRealProjectTestBase() {
         for (i in 0..Int.MAX_VALUE) {
             val pool = Executors.newWorkStealingPool()
             val indicator = EmptyProgressIndicator()
-            buildCrateDefMapForAllCrates(project, pool, indicator, async = true)
+            buildDefMapForAllCrates(project, pool, indicator, async = true)
         }
     }
 

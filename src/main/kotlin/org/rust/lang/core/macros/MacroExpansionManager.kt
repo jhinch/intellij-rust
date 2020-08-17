@@ -52,6 +52,7 @@ import org.rust.lang.core.psi.*
 import org.rust.lang.core.psi.RsPsiTreeChangeEvent.*
 import org.rust.lang.core.psi.ext.*
 import org.rust.lang.core.resolve.indexes.RsMacroCallIndex
+import org.rust.lang.core.resolve2.defMapService
 import org.rust.openapiext.*
 import org.rust.stdext.*
 import org.rust.taskQueue
@@ -310,7 +311,7 @@ private class MacroExpansionServiceBuilder private constructor(
     private val dirs: Dirs,
     private val serStorage: SerializedExpandedMacroStorage?,
     private val expansionsDirVi: VirtualFile
-){
+) {
     fun buildInReadAction(project: Project): MacroExpansionServiceImplInner {
         val storage = serStorage?.deserializeInReadAction(project) ?: ExpandedMacroStorage(project)
         return MacroExpansionServiceImplInner(project, dirs, storage, expansionsDirVi)
@@ -451,7 +452,7 @@ private class MacroExpansionServiceImplInner(
             // Using a buffer to avoid IO in the read action
             // BACKCOMPAT: 2020.1 use async read action and extract `runReadAction` from `withContext`
             val (buffer, modCount) = runReadAction {
-                val buffer = BufferExposingByteArrayOutputStream(1024*1024) // average stdlib storage size
+                val buffer = BufferExposingByteArrayOutputStream(1024 * 1024) // average stdlib storage size
                 DataOutputStream(buffer).use { data ->
                     ExpandedMacroStorage.saveStorage(storage, data)
                     val dirToSave = MacroExpansionFileSystem.getInstance().getDirectory(dirs.expansionDirPath) ?: run {
@@ -775,6 +776,11 @@ private class MacroExpansionServiceImplInner(
         }
 
         override fun rustPsiChanged(file: PsiFile, element: PsiElement, isStructureModification: Boolean) {
+            if (isStructureModification && file is RsFile) {
+                println("rustPsiChanged: ${file.name} $element $isStructureModification")
+                project.defMapService.onFileChanged(file)
+            }
+
             if (!isExpansionModeNew) return
             val shouldScheduleUpdate =
                 (isStructureModification || element.ancestorOrSelf<RsMacroCall>()?.isTopLevelExpansion == true) &&

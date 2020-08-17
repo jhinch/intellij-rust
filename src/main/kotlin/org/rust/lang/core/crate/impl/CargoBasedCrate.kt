@@ -16,13 +16,13 @@ import org.rust.cargo.project.workspace.CargoWorkspace
 import org.rust.cargo.project.workspace.PackageOrigin
 import org.rust.lang.core.crate.Crate
 import org.rust.lang.core.crate.CratePersistentId
-import org.rust.lang.core.crate.crateGraph
 import org.rust.lang.core.macros.macroExpansionManager
 import org.rust.lang.core.psi.RsFile
 import org.rust.lang.core.psi.rustFile
 import org.rust.lang.core.psi.rustStructureModificationTracker
 import org.rust.lang.core.resolve2.CrateDefMap
-import org.rust.lang.core.resolve2.buildCrateDefMap
+import org.rust.lang.core.resolve2.buildDefMap
+import org.rust.lang.core.resolve2.defMapService
 import org.rust.openapiext.CachedValueDelegate
 import org.rust.openapiext.fileId
 import org.rust.openapiext.testAssert
@@ -73,10 +73,10 @@ class CargoBasedCrate(
         get() {
             val isMacroExpansionEnabled = cargoProject.project.macroExpansionManager.isMacroExpansionEnabled
             return if (isMacroExpansionEnabled) {
-                val crateGraphService = cargoProject.project.crateGraph as CrateGraphServiceImpl  // todo
+                val defMapService = cargoProject.project.defMapService
                 val id = id ?: return null
-                testAssert({ id in crateGraphService.crateDefMaps }, { "DefMap for crate $this is not yet computed" })
-                return crateGraphService.crateDefMaps[id]
+                testAssert({ id in defMapService.defMaps }, { "DefMap for crate $this is not yet computed" })
+                return defMapService.defMaps[id]
             } else {
                 synchronized(defMapLazyLock) {
                     defMapLazy
@@ -91,10 +91,10 @@ class CargoBasedCrate(
         check(!isComputingDefMap) { "Attempt to compute defMap for $this while it is being computed" }
         isComputingDefMap = true
         try {
-            val crateGraphService = cargoProject.project.crateGraph as CrateGraphServiceImpl
+            val defMapService = cargoProject.project.defMapService
             val crateId = id ?: return
-            val defMap = buildCrateDefMap(this, indicator)
-            crateGraphService.crateDefMaps[crateId] = defMap
+            val defMap = buildDefMap(this, indicator)
+            defMapService.defMaps[crateId] = defMap
         } finally {
             isComputingDefMap = false
         }
@@ -104,7 +104,7 @@ class CargoBasedCrate(
     private val defMapLazyLock: Any = Any()
     private val defMapLazy: CrateDefMap? by CachedValueDelegate {
         val indicator = ProgressManager.getInstance().progressIndicator ?: EmptyProgressIndicator()
-        val result = buildCrateDefMap(this, indicator)
+        val result = buildDefMap(this, indicator)
         // todo use tracker for changes only in this crate
         CachedValueProvider.Result(result, cargoProject.project.rustStructureModificationTracker)
     }

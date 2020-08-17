@@ -34,7 +34,7 @@ import org.rust.lang.core.resolve.DEFAULT_RECURSION_LIMIT
 import org.rust.lang.core.resolve.ref.RsMacroPathReferenceImpl
 import org.rust.lang.core.resolve.ref.RsResolveCache
 import org.rust.lang.core.resolve2.IS_NEW_RESOLVE_ENABLED
-import org.rust.lang.core.resolve2.buildCrateDefMapForAllCrates
+import org.rust.lang.core.resolve2.updateDefMapForAllCrates
 import org.rust.openapiext.*
 import org.rust.stdext.HashCode
 import org.rust.stdext.getLeading64bits
@@ -93,7 +93,8 @@ abstract class MacroExpansionTaskBase(
         }
 
         if (IS_NEW_RESOLVE_ENABLED) {
-            buildCrateDefMapForAllCrates(project, pool, subTaskIndicator)
+            val isFirstTime = taskType == RsTask.TaskType.MACROS_UNPROCESSED
+            updateDefMapForAllCrates(project, pool, subTaskIndicator, isFirstTime)
         }
 
         expansionSteps = getMacrosToExpand(dumbService).iterator()
@@ -137,7 +138,7 @@ abstract class MacroExpansionTaskBase(
                 // Restart `DaemonCodeAnalyzer` after releasing `HeavyProcessLatch`. Used instead of
                 // `DaemonCodeAnalyzer.restart()` to do restart more gracefully, i.e. don't invalidate
                 // highlights if nothing actually changed
-                WriteAction.runAndWait<Throwable> {  }
+                WriteAction.runAndWait<Throwable> { }
             }
         }
     }
@@ -526,9 +527,9 @@ object ExpansionPipeline {
     }
 }
 
-private class CorruptedExpansionStorageException: RuntimeException {
-    constructor(): super()
-    constructor(cause: Exception): super(cause)
+private class CorruptedExpansionStorageException : RuntimeException {
+    constructor() : super()
+    constructor(cause: Exception) : super(cause)
 }
 
 val RsMacroCall.isTopLevelExpansion: Boolean

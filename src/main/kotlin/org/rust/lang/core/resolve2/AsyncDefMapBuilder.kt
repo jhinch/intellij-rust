@@ -13,7 +13,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executor
 import kotlin.system.measureTimeMillis
 
-class AsyncCrateDefMapBuilder(
+class AsyncDefMapBuilder(
     private val pool: Executor,
     topSortedCrates: List<Crate>,
     private val indicator: ProgressIndicator
@@ -37,13 +37,13 @@ class AsyncCrateDefMapBuilder(
 
         if (!isUnitTestMode || wallTime > 2000) {
             val totalTime = tasksTimes.values.sum()
-            println("wallTime: $wallTime, totalTime: $totalTime, " +
-                "parallelism coefficient: ${"%.2f".format((totalTime.toDouble() / wallTime))}")
             val top5crates = tasksTimes.entries
                 .sortedByDescending { (_, time) -> time }
                 .take(5)
                 .joinToString { (crate, time) -> "$crate ${time}ms" }
-            println("Top 5 crates: $top5crates")
+            println("wallTime: $wallTime, totalTime: $totalTime, " +
+                "parallelism coefficient: ${"%.2f".format((totalTime.toDouble() / wallTime))}.    " +
+                "Top 5 crates: $top5crates")
         }
     }
 
@@ -51,11 +51,11 @@ class AsyncCrateDefMapBuilder(
         remainingDependenciesCounts
             .filterValues { it == 0 }
             .keys
-            .forEach { buildCrateDefMapAsync(it) }
+            .forEach { buildDefMapAsync(it) }
         completableFuture.join()
     }
 
-    private fun buildCrateDefMapAsync(crate: Crate) {
+    private fun buildDefMapAsync(crate: Crate) {
         pool.execute {
             try {
                 tasksTimes[crate] = measureTimeMillis {
@@ -85,7 +85,7 @@ class AsyncCrateDefMapBuilder(
         count -= 1
         remainingDependenciesCounts[crate] = count
         if (count == 0) {
-            buildCrateDefMapAsync(crate)
+            buildDefMapAsync(crate)
         }
     }
 }

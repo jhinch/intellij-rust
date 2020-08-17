@@ -13,14 +13,16 @@ import com.intellij.openapi.vfs.newvfs.persistent.PersistentFS
 import com.intellij.openapiext.isUnitTestMode
 import org.rust.ide.utils.isEnabledByCfg
 import org.rust.lang.core.crate.Crate
+import org.rust.lang.core.crate.CratePersistentId
 import org.rust.lang.core.crate.crateGraph
-import org.rust.lang.core.crate.impl.CrateGraphServiceImpl
 import org.rust.lang.core.crate.impl.DoctestCrate
 import org.rust.lang.core.psi.*
 import org.rust.lang.core.psi.ext.*
 import org.rust.lang.core.resolve.*
 import org.rust.lang.core.resolve.ItemProcessingMode.WITHOUT_PRIVATE_IMPORTS
 import org.rust.lang.core.resolve2.Visibility.CfgDisabled
+import org.rust.openapiext.fileId
+import org.rust.openapiext.testAssert
 import org.rust.openapiext.toPsiFile
 import java.util.concurrent.Executor
 import kotlin.system.measureTimeMillis
@@ -28,7 +30,53 @@ import kotlin.system.measureTimeMillis
 val IS_NEW_RESOLVE_ENABLED: Boolean = true
 // val IS_NEW_RESOLVE_ENABLED: Boolean = isFeatureEnabled(RsExperiments.RESOLVE_NEW)
 
-fun buildCrateDefMapForAllCrates(
+fun updateDefMapForAllCrates(
+    project: Project,
+    pool: Executor,
+    indicator: ProgressIndicator,
+    isFirstTime: Boolean
+) {
+    if (isFirstTime) {
+        buildDefMapForAllCrates(project, pool, indicator)
+        return
+    }
+
+    val defMapService = project.defMapService
+    val changedCrates = getChangedCrates(defMapService)
+    defMapService.addChangedCrates(changedCrates)
+    indicator.checkCanceled()
+
+    // `changedCrates` will be processed in next task
+    if (defMapService.hasChangedFiles()) return
+
+    // todo async
+    val changedCratesAll = defMapService.takeChangedCrates()
+    val topSortedCrates = runReadAction { project.crateGraph.topSortedCrates }
+        .filter {
+            val id = it.id ?: return@filter false
+            id in changedCratesAll
+        }
+    println("changedCrates: $topSortedCrates")
+    for (crate in topSortedCrates) {
+        crate.updateDefMap(indicator)
+    }
+}
+
+private fun getChangedCrates(defMapService: DefMapService): Set<CratePersistentId> {
+    val changedFiles = defMapService.takeChangedFiles()
+    val changedCrates = hashSetOf<CratePersistentId>()
+    for (file in changedFiles) {
+        val (modificationStampPrev, crate) = defMapService.fileModificationStamps[file.virtualFile.fileId] ?: continue
+        val modificationStampCurr = file.modificationStamp
+        testAssert { modificationStampCurr >= modificationStampPrev }
+        if (modificationStampCurr > modificationStampPrev) {
+            changedCrates += crate
+        }
+    }
+    return changedCrates
+}
+
+fun buildDefMapForAllCrates(
     project: Project,
     pool: Executor,
     indicator: ProgressIndicator,
@@ -40,10 +88,10 @@ fun buildCrateDefMapForAllCrates(
     if (topSortedCrates.isEmpty()) return
 
     println("\tbuildCrateDefMapForAllCrates")
-    (crateGraph as CrateGraphServiceImpl).crateDefMaps.clear()  // todo
+    project.defMapService.defMaps.clear()
     val time = measureTimeMillis {
         if (async) {
-            AsyncCrateDefMapBuilder(pool, topSortedCrates, indicator).build()
+            AsyncDefMapBuilder(pool, topSortedCrates, indicator).build()
         } else {
             for (crate in topSortedCrates) {
                 crate.updateDefMap(indicator)
@@ -58,15 +106,17 @@ fun buildCrateDefMapForAllCrates(
     DaemonCodeAnalyzer.getInstance(project).restart()
 }
 
-fun buildCrateDefMap(crate: Crate, indicator: ProgressIndicator): CrateDefMap? {
+fun buildDefMap(crate: Crate, indicator: ProgressIndicator): CrateDefMap? {
     RESOLVE_LOG.info("Building DefMap for $crate")
     val project = crate.cargoProject.project
     val context = CollectorContext(crate, indicator)
     val defMap = runReadAction {
-        buildCrateDefMapContainingExplicitItems(context)
+        buildDefMapContainingExplicitItems(context)
     } ?: return null
     DefCollector(project, defMap, context).collect()
     defMap.onBuildFinish()
+    project.defMapService.fileModificationStamps += defMap.fileModificationStamps
+        .mapValues { (_, time) -> time to defMap.crate }
     return defMap
 }
 
@@ -77,14 +127,7 @@ fun processItemDeclarations2(
     ipm: ItemProcessingMode  // todo
 ): Boolean {
     val project = scope.project
-    val crate = scope.containingCrate ?: return false
-    check(crate !is DoctestCrate) { "doc test crates are not supported by CrateDefMap" }
-    val defMap = crate.defMap ?: run {
-        // todo
-        if (isUnitTestMode) error("defMap is null for $crate during resolve")
-        println("defMap is null for $crate during resolve")
-        return false
-    }
+    val defMap = getDefMap(scope) ?: return false
     // todo optimization: добавить в CrateDefMap мапку из fileId в ModData
     val modData = defMap.getModData(scope) ?: return false
 
@@ -143,8 +186,7 @@ fun processItemDeclarations2(
 
 fun processMacros(scope: RsMod, processor: RsResolveProcessor): Boolean {
     val project = scope.project
-    val crate = scope.containingCrate ?: return false
-    val defMap = crate.defMap ?: error("defMap is null for $crate during macro resolve")
+    val defMap = getDefMap(scope) ?: return false
     val modData = defMap.getModData(scope) ?: return false
 
     modData.legacyMacros.processEntriesWithName(processor.name) { name, macroInfo ->
@@ -160,6 +202,18 @@ fun processMacros(scope: RsMod, processor: RsResolveProcessor): Boolean {
         processor(name, macros)
     } && return true
     return false
+}
+
+private fun getDefMap(scope: RsMod): CrateDefMap? {
+    val crate = scope.containingCrate ?: return null
+    check(crate !is DoctestCrate) { "doc test crates are not supported by CrateDefMap" }
+    val defMap = crate.defMap
+    if (defMap == null) {
+        // todo
+        if (isUnitTestMode) error("defMap is null for $crate during resolve")
+        // println("defMap is null for $crate during resolve")
+    }
+    return defMap
 }
 
 // todo make inline? (станет удобнее делать `&& return true`)

@@ -43,7 +43,7 @@ class CollectorContext(
     val macroCalls: MutableList<MacroCallInfo> = mutableListOf()
 }
 
-fun buildCrateDefMapContainingExplicitItems(context: CollectorContext): CrateDefMap? {
+fun buildDefMapContainingExplicitItems(context: CollectorContext): CrateDefMap? {
     val crate = context.crate
     val crateId = crate.id ?: return null
     val crateRoot = crate.rootMod ?: return null
@@ -99,7 +99,7 @@ fun buildCrateDefMapContainingExplicitItems(context: CollectorContext): CrateDef
         context.imports += it
         collector.importExternCrateMacros(it.usePath)
     }
-    collector.collectElements(crateRoot)
+    collector.collectMod(crateRoot)
 
     removeInvalidImportsAndMacroCalls(defMap, context)
     context.imports  // imports from nested modules first
@@ -150,10 +150,15 @@ class ModCollector(
     private val crate: Crate get() = context.crate
     private val project: Project get() = context.project
 
-    /** [itemsOwner] - [RsMod] or [RsForeignModItem] */
-    fun collectElements(itemsOwner: RsItemsOwner) = collectElements(itemsOwner.itemsAndMacros.toList())
+    fun collectMod(mod: RsMod) {
+        if (mod is RsFile) defMap.addVisitedFile(mod)
+        collectElements(mod)
+    }
 
     fun collectExpandedItems(items: List<RsExpandedElement>) = collectElements(items)
+
+    /** [itemsOwner] - [RsMod] or [RsForeignModItem] */
+    private fun collectElements(itemsOwner: RsItemsOwner) = collectElements(itemsOwner.itemsAndMacros.toList())
 
     private fun collectElements(items: List<RsElement>) {
         // This should be processed eagerly instead of deferred to resolving.
@@ -311,7 +316,7 @@ class ModCollector(
         childModData.legacyMacros += modData.legacyMacros
 
         val collector = ModCollector(childModData, defMap, crateRoot, context)
-        collector.collectElements(childMod)
+        collector.collectMod(childMod)
         return childModData
     }
 
