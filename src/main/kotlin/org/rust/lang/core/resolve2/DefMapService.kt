@@ -20,6 +20,7 @@ class DefMapService {
     val defMaps: MutableMap<CratePersistentId, CrateDefMap?> = ConcurrentHashMap()
 
     /**
+     * todo update comment
      * Contains [PsiFile.getModificationStamp] for rust files of all crates.
      * Note: [VirtualFile.getModificationStamp] changes only after file is saved to disk.
      * Todo: Not working after IDE restart ?
@@ -57,8 +58,10 @@ class DefMapService {
     fun takeChangedCrates(): Set<CratePersistentId> =
         changedCrates.toHashSet()
             .also { changedCrates.clear() }
+
+    @Synchronized
+    fun getChangedCrates(): Set<CratePersistentId> = changedCrates.toHashSet()
 }
 
 val Project.defMapService: DefMapService
     get() = service()
-

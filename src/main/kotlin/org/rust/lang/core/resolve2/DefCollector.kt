@@ -23,6 +23,7 @@ import org.rust.lang.core.resolve2.Visibility.Invisible
 import org.rust.openapiext.findFileByMaybeRelativePath
 import org.rust.openapiext.testAssert
 import org.rust.openapiext.toPsiFile
+import java.io.DataOutputStream
 
 /** Resolves all imports (and adds to [defMap]) using fixed point iteration algorithm */
 class DefCollector(
@@ -410,7 +411,7 @@ class DefCollector(
             val visibility = (perNs.types ?: perNs.values ?: perNs.macros)!!.visibility
             update(modData, listOf(name to perNs), visibility, NAMED)
         }
-        val collector = ModCollector(containingMod, defMap, defMap.root, context, macroDepth, onAddItem)
+        val collector = ModCollector(containingMod, defMap, defMap.root, context, macroDepth, onAddItem = onAddItem)
         collector.collectExpandedItems(items)
     }
 }
@@ -433,6 +434,18 @@ data class Import(
     val isPrelude: Boolean = false  // #[prelude_import]
 ) {
     var status: PartialResolvedImport = Unresolved
+
+    fun writeTo(data: DataOutputStream) {
+        containingMod.path.writeTo(data, withCrate = false)
+        data.writeUTF(usePath)
+        data.writeUTF(nameInScope)
+        visibility.writeTo(data, withCrate = false)
+        // todo use one byte
+        data.writeBoolean(isGlob)
+        data.writeBoolean(isExternCrate)
+        data.writeBoolean(isMacroUse)
+        data.writeBoolean(isPrelude)
+    }
 }
 
 enum class ImportType { NAMED, GLOB }
@@ -467,6 +480,12 @@ class MacroCallInfo(
     val dollarCrateMap: RangeMap = RangeMap.EMPTY
 ) {
     override fun toString(): String = "${containingMod.path}:  $path! { $body }"
+
+    fun writeTo(data: DataOutputStream) {
+        containingMod.path.writeTo(data, withCrate = false)
+        data.writeUTF(path)
+        data.writeUTF(body)
+    }
 }
 
 // todo переместить куда-нибудь

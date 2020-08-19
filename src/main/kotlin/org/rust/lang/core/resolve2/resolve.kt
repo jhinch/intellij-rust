@@ -7,6 +7,7 @@ package org.rust.lang.core.resolve2
 
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapiext.isUnitTestMode
+import com.intellij.psi.FileViewProvider
 import org.rust.cargo.project.workspace.CargoWorkspace
 import org.rust.lang.core.crate.CratePersistentId
 import org.rust.lang.core.psi.RsEnumVariant
@@ -16,6 +17,9 @@ import org.rust.lang.core.psi.ext.containingCrate
 import org.rust.lang.core.psi.ext.superMods
 import org.rust.lang.core.resolve.Namespace
 import org.rust.openapiext.fileId
+import org.rust.stdext.HashCode
+import java.io.DataInputStream
+import java.io.DataOutputStream
 
 class DefDatabase(
     /** `DefMap`s for some crate and all its dependencies (including transitive) */
@@ -45,6 +49,15 @@ class DefDatabase(
 
 typealias FileId = Int
 
+class FileInfo(
+    /** Result of [FileViewProvider.getModificationStamp] - survives IDE restart (todo false?) */
+    val modificationStamp: Long,
+    /** Optimization for [CrateDefMap.getModData] */
+    val modData: ModData
+) {
+    lateinit var hash: HashCode
+}
+
 // todo вынести поля нужные только на этапе построения в collector ?
 class CrateDefMap(
     val crate: CratePersistentId,
@@ -61,12 +74,7 @@ class CrateDefMap(
     // todo сделать DefDatabase интерфейсом и использовать другую реализацию (которая вызывает `crate.defMap`) после построения текущей DefMap ?
     val defDatabase: DefDatabase = DefDatabase(allDependenciesDefMaps + (crate to this))
 
-    // todo move to DefMapService ?
-    // todo объединить с modDataByFileId ?
-    val fileModificationStamps: MutableMap<FileId, Long> = hashMapOf()
-
-    /** Optimization for [getModData] */
-    private val modDataByFileId: MutableMap<FileId, ModData> = hashMapOf()
+    val fileInfos: MutableMap<FileId, FileInfo> = hashMapOf()
 
     fun getModData(modPath: ModPath): ModData? {
         check(crate == modPath.crate)
@@ -89,7 +97,7 @@ class CrateDefMap(
                 check(isUnitTestMode)  // todo
                 return getModDataSlow(mod)
             }
-            return modDataByFileId[virtualFile.fileId]
+            return fileInfos[virtualFile.fileId]?.modData
         }
         val parentMod = mod.`super` ?: return null
         val parentModData = getModDataFast(parentMod) ?: return null
@@ -122,36 +130,17 @@ class CrateDefMap(
         }
     }
 
-    fun addVisitedFile(file: RsFile) {
-        fileModificationStamps[file.virtualFile.fileId] = file.modificationStamp
-    }
-
-    /** Called after resolving imports and expanding macros */
-    fun onBuildFinish() {
-        // todo inline ?
-        fillModDataByFileId()
-    }
-
-    private fun fillModDataByFileId() {
-        fun visitSubtree(modData: ModData, visitor: (ModData) -> Unit) {
-            visitor(modData)
-            for (childModData in modData.childModules.values) {
-                visitSubtree(childModData, visitor)
-            }
-        }
-        visitSubtree(root) {
-            if (it.isRsFile) {
-                modDataByFileId[it.fileId] = it
-            }
-        }
+    fun addVisitedFile(file: RsFile, modData: ModData) {
+        val fileId = file.virtualFile.fileId
+        // TOdO: File included in module tree multiple times ?
+        // testAssert { fileId !in fileInfos }
+        fileInfos[fileId] = FileInfo(file.viewProvider.modificationStamp, modData)
     }
 
     override fun toString(): String = crateDescription
 }
 
 class ModData(
-    // todo три мапы ?
-    val visibleItems: MutableMap<String, PerNs>,
     val parent: ModData?,
     val crate: CratePersistentId,
     val path: ModPath,
@@ -169,6 +158,8 @@ class ModData(
     val isRsFile: Boolean get() = fileRelativePath.isEmpty()
     val parents: Sequence<ModData> get() = generateSequence(this) { it.parent }
 
+    // todo три мапы ?
+    val visibleItems: MutableMap<String, PerNs> = hashMapOf()
     val childModules: MutableMap<String, ModData> = hashMapOf()
 
     /**
@@ -218,6 +209,15 @@ class ModData(
     fun getNthParent(n: Int): ModData? {
         check(n >= 0)
         return parents.drop(n).firstOrNull()
+    }
+
+    fun visitDescendantModules(visitor: (ModData) -> Boolean) {
+        val visitSubtree = visitor(this)
+        if (visitSubtree) {
+            for (childModData in childModules.values) {
+                childModData.visitDescendantModules(visitor)
+            }
+        }
     }
 
     override fun toString(): String = "ModData(path=$path, crate=$crate)"
@@ -357,6 +357,18 @@ sealed class Visibility {
             Invisible -> "Invisible"
             CfgDisabled -> "CfgDisabled"
         }
+
+    fun writeTo(data: DataOutputStream, withCrate: Boolean) {
+        when (this) {
+            is Public -> data.writeByte(0)
+            is Restricted -> {
+                data.writeByte(1)
+                if (withCrate) inMod.path.writeTo(data, withCrate)
+            }
+            is Invisible -> data.writeByte(2)
+            is CfgDisabled -> data.writeByte(3)
+        }
+    }
 }
 
 /** Path to a module or an item in module */
@@ -374,7 +386,14 @@ data class ModPath(
 
     override fun toString(): String = path.ifEmpty { "crate" }
 
+    fun writeTo(data: DataOutputStream, withCrate: Boolean) {
+        if (withCrate) data.writeInt(crate)
+        data.writeUTF(path)
+    }
+
     companion object {
+        fun readFrom(data: DataInputStream): ModPath = ModPath(data.readInt(), data.readUTF().split("::"))
+
         // todo remove ?
         fun fromMod(mod: RsMod, crate: CratePersistentId): ModPath? {
             val segments = mod.superMods

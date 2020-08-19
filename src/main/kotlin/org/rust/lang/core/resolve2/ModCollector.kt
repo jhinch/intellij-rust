@@ -37,8 +37,10 @@ class CollectorContext(
     val indicator: ProgressIndicator
 ) {
     val project: Project = crate.cargoProject.project
+
     /** All explicit imports (not expanded from macros) */
     val imports: MutableList<Import> = mutableListOf()
+
     /** All explicit macro calls  */
     val macroCalls: MutableList<MacroCallInfo> = mutableListOf()
 }
@@ -74,7 +76,6 @@ fun buildDefMapContainingExplicitItems(context: CollectorContext): CrateDefMap? 
     val crateRootOwnedDirectory = crateRoot.parent
         ?: error("Can't find parent directory for crate root of $crate crate")
     val crateRootData = ModData(
-        visibleItems = hashMapOf(),
         parent = null,
         crate = crateId,
         path = ModPath(crateId, emptyList()),
@@ -137,6 +138,12 @@ class ModCollector(
     private val context: CollectorContext,
     private val macroDepth: Int = 0,
     /**
+     * `true` when collecting during building DefMap.
+     * `false` when collecting during calculating file hash
+     */
+    // todo refactor (make abstract class?)
+    private val isUsualCollect: Boolean = true,
+    /**
      * called when new [RsItemElement] is found
      * default behaviour: just add it to [ModData.visibleItems]
      * behaviour when processing expanded items:
@@ -151,7 +158,7 @@ class ModCollector(
     private val project: Project get() = context.project
 
     fun collectMod(mod: RsMod) {
-        if (mod is RsFile) defMap.addVisitedFile(mod)
+        if (isUsualCollect && mod is RsFile) defMap.addVisitedFile(mod, modData)
         collectElements(mod)
     }
 
@@ -213,9 +220,7 @@ class ModCollector(
 
     private fun collectExternCrate(externCrate: RsExternCrateItem) {
         val isEnabledByCfg = modData.isEnabledByCfg && externCrate.isEnabledByCfgSelf(crate)
-        if (externCrate.hasMacroUse && isEnabledByCfg) {
-            importExternCrateMacros(externCrate.referenceName)
-        }
+        onCollectExternCrate(externCrate, isEnabledByCfg)
         imports += Import(
             modData,
             externCrate.referenceName,
@@ -224,6 +229,12 @@ class ModCollector(
             isExternCrate = true,
             isMacroUse = externCrate.hasMacroUse
         )
+    }
+
+    private fun onCollectExternCrate(externCrate: RsExternCrateItem, isEnabledByCfg: Boolean) {
+        if (isUsualCollect && isEnabledByCfg && externCrate.hasMacroUse) {
+            importExternCrateMacros(externCrate.referenceName)
+        }
     }
 
     // `#[macro_use] extern crate <name>;` - import macros
@@ -272,7 +283,13 @@ class ModCollector(
         val (childMod, hasMacroUse, pathAttribute) = when (item) {
             is RsModItem -> Triple(item, item.hasMacroUse, item.pathAttribute)
             is RsModDeclItem -> {
-                val childMod: RsMod = item.resolve(modData, project) ?: return null
+                val childMod: RsMod = if (isUsualCollect) {
+                    item.resolve(modData, project) ?: return null
+                } else {
+                    // We can't just return `null` because then `item` will not be added to `visibleItems`.
+                    // todo: use singleton ?
+                    RsPsiFactory(project).createModItem("__tmp__", "")
+                }
                 Triple(childMod, item.hasMacroUse, item.pathAttribute)
             }
             else -> return null
@@ -303,7 +320,6 @@ class ModCollector(
             modData.fileId to "${modData.fileRelativePath}::$childModName"
         }
         val childModData = ModData(
-            visibleItems = hashMapOf(),
             parent = modData,
             crate = modData.crate,
             path = childModPath,
@@ -323,16 +339,7 @@ class ModCollector(
     private fun collectEnumAsModData(enum: RsEnumItem): ModData {
         val enumName = enum.name!!  // todo
         val enumPath = modData.path.append(enumName)
-        val visibleItems = enum.variants
-            .mapNotNull { variant ->
-                val variantName = variant.name ?: return@mapNotNull null
-                val variantPath = enumPath.append(variantName)
-                val visItem = VisItem(variantPath, Visibility.Public)
-                variantName to PerNs(visItem, variant.namespaces)
-            }
-            .toMap(hashMapOf())
-        return ModData(
-            visibleItems = visibleItems,
+        val enumModData = ModData(
             parent = modData,
             crate = modData.crate,
             path = enumPath,
@@ -342,6 +349,13 @@ class ModCollector(
             ownedDirectoryId = modData.ownedDirectoryId,  // actually can use any value here
             isEnum = true
         )
+        for (variant in enum.variants) {
+            val variantName = variant.name ?: continue
+            val variantPath = enumPath.append(variantName)
+            val visItem = VisItem(variantPath, Visibility.Public)
+            enumModData.visibleItems[variantName] = PerNs(visItem, variant.namespaces)
+        }
+        return enumModData
     }
 
     private fun collectMacroCall(call: RsMacroCall) {
@@ -460,26 +474,34 @@ private fun RsVisibilityOwner?.getVisibility(
         RsVisStubKind.RESTRICTED -> {
             // https://doc.rust-lang.org/reference/visibility-and-privacy.html#pubin-path-pubcrate-pubsuper-and-pubself
             val path = vis.visRestriction!!.path
-            val pathText = path.fullPath.removePrefix("::")  // 2015 edition, absolute paths
-            if (pathText.isEmpty() || pathText == "crate") return Visibility.Restricted(crateRoot)
-
-            val segments = pathText.split("::")
-            val initialModData = when (segments.first()) {
-                "super", "self" -> containingMod
-                else -> crateRoot
-            }
-            val pathTarget = segments
-                .fold(initialModData) { modData, segment ->
-                    val nextModData = when (segment) {
-                        "self" -> modData
-                        "super" -> modData.parent
-                        else -> modData.childModules[segment]
-                    }
-                    nextModData ?: return Visibility.Restricted(crateRoot)
-                }
-            Visibility.Restricted(pathTarget)
+            resolveRestrictedVisibility(path, crateRoot, containingMod)
         }
     }
+}
+
+private fun resolveRestrictedVisibility(
+    path: RsPath,
+    crateRoot: ModData,
+    containingMod: ModData
+): Visibility.Restricted {
+    val pathText = path.fullPath.removePrefix("::")  // 2015 edition, absolute paths
+    if (pathText.isEmpty() || pathText == "crate") return Visibility.Restricted(crateRoot)
+
+    val segments = pathText.split("::")
+    val initialModData = when (segments.first()) {
+        "super", "self" -> containingMod
+        else -> crateRoot
+    }
+    val pathTarget = segments
+        .fold(initialModData) { modData, segment ->
+            val nextModData = when (segment) {
+                "self" -> modData
+                "super" -> modData.parent
+                else -> modData.childModules[segment]
+            }
+            nextModData ?: return Visibility.Restricted(crateRoot)
+        }
+    return Visibility.Restricted(pathTarget)
 }
 
 private fun ModData.checkChildModulesAndVisibleItemsConsistency() {
