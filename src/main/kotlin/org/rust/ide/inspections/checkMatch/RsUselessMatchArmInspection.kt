@@ -51,15 +51,15 @@ fun checkUselessArm(match: RsMatchExpr, holder: RsProblemsHolder) {
 
     for ((i, patterns) in matrix.withIndex()) {
         val armPat = armPats[i]
-        val useful = isUseful(seen, patterns, false, match.crateRoot, true)
+        val useful = isUseful(seen, patterns, false, match.crateRoot, isTopLevel = true)
         if (!useful.isUseful) {
             val arm = armPat.ancestorStrict<RsMatchArm>() ?: return
 
             val fix = if (arm.patList.size == 1) {
-                /** if the arm consists of only one pattern, we can delete the whole arm */
+                /** If the arm consists of only one pattern, we can delete the whole arm */
                 SubstituteTextFix.delete("Remove useless match arm", match.containingFile, arm.rangeWithPrevSpace)
             } else {
-                /** otherwise, delete only ` | <pat>` part from the arm */
+                /** Otherwise, delete only ` | <pat>` part from the arm */
                 val separatorRange = (armPat.getPrevNonCommentSibling() as? LeafPsiElement)
                     ?.takeIf { it.elementType == OR }
                     ?.rangeWithPrevSpace
@@ -72,7 +72,7 @@ fun checkUselessArm(match: RsMatchExpr, holder: RsProblemsHolder) {
             holder.registerProblem(armPat, "Unreachable pattern", ProblemHighlightType.WARNING, fix)
         }
 
-        /** if the arm is not guarded, we have "seen" the pattern */
+        /** If the arm is not guarded, we have "seen" the pattern */
         if (armPat.ancestorStrict<RsMatchArm>()?.matchArmGuard == null) {
             seen.add(patterns)
         }
