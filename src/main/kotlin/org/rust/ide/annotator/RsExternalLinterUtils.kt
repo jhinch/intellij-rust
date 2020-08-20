@@ -11,7 +11,6 @@ import com.intellij.CommonBundle
 import com.intellij.execution.ExecutionException
 import com.intellij.lang.annotation.AnnotationHolder
 import com.intellij.lang.annotation.HighlightSeverity
-import com.intellij.lang.annotation.ProblemGroup
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.WriteAction
 import com.intellij.openapi.diagnostic.Logger
@@ -288,11 +287,13 @@ private fun RustcMessage.collectQuickFixes(file: PsiFile, document: Document): L
 }
 
 private fun createQuickFix(file: PsiFile, document: Document, span: RustcSpan?, message: String): ApplySuggestionFix? {
-    if (span?.suggested_replacement == null || span.suggestion_applicability == null) return null
+    val applicability = span?.suggestion_applicability
+    if (applicability !in listOf(Applicability.MACHINE_APPLICABLE, Applicability.MAYBE_INCORRECT)) return null
+    val suggestedReplacement = span?.suggested_replacement ?: return null
     val textRange = span.toTextRange(document) ?: return null
     val endElement = file.findElementAt(textRange.endOffset - 1) ?: return null
     val startElement = file.findElementAt(textRange.startOffset) ?: endElement
-    return ApplySuggestionFix(message, span.suggested_replacement, startElement, endElement)
+    return ApplySuggestionFix(message, suggestedReplacement, startElement, endElement)
 }
 
 private fun formatMessage(message: String): String {
