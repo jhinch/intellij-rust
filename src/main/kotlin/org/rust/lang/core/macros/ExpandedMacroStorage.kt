@@ -39,6 +39,8 @@ import org.rust.lang.core.resolve.DEFAULT_RECURSION_LIMIT
 import org.rust.lang.core.stubs.RsFileStub
 import org.rust.openapiext.*
 import org.rust.stdext.HashCode
+import org.rust.stdext.readHashCode
+import org.rust.stdext.writeHashCode
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.IOException
@@ -164,6 +166,10 @@ class ExpandedMacroStorage(val project: Project) {
 
         if (newInfo.expansionFile != null && ranges != null) {
             newInfo.expansionFile.writeRangeMap(ranges)
+        }
+
+        if (newInfo.expansionFile != null && defHash != null && callHash != null) {
+            newInfo.expansionFile.writeMixHash(HashCode.mix(defHash, callHash))
         }
 
         return newInfo
@@ -941,15 +947,6 @@ private fun DataInputStream.readUTFNullable(): String? {
     }
 }
 
-private fun DataOutputStream.writeHashCode(hash: HashCode) =
-    write(hash.toByteArray())
-
-private fun DataInputStream.readHashCode(): HashCode {
-    val bytes = ByteArray(HashCode.ARRAY_LEN)
-    readFully(bytes)
-    return HashCode.fromByteArray(bytes)
-}
-
 private fun DataOutputStream.writeHashCodeNullable(hash: HashCode?) {
     if (hash == null) {
         writeBoolean(false)
@@ -985,6 +982,11 @@ private val RANGE_MAP_ATTRIBUTE = FileAttribute(
     RANGE_MAP_ATTRIBUTE_VERSION,
     /*fixedSize = */ true // don't allocate extra space for each record
 )
+private val MACRO_MIX_HASH_ATTRIBUTE = FileAttribute(
+    "org.rust.macro.hash",
+    0,
+    /*fixedSize = */ true
+)
 
 private fun VirtualFile.writeRangeMap(ranges: RangeMap) {
     checkWriteAccessAllowed()
@@ -1007,4 +1009,19 @@ fun VirtualFile.loadRangeMap(): RangeMap? {
     val ranges = RangeMap.readFrom(data)
     putUserData(MACRO_RANGE_MAP_CACHE_KEY, WeakReference(ranges))
     return ranges
+}
+
+private fun VirtualFile.writeMixHash(hash: HashCode) {
+    checkWriteAccessAllowed()
+
+    MACRO_MIX_HASH_ATTRIBUTE.writeAttribute(this).use {
+        it.writeHashCode(hash)
+    }
+}
+
+fun VirtualFile.loadMixHash(): HashCode? {
+    checkReadAccessAllowed()
+
+    val data = MACRO_MIX_HASH_ATTRIBUTE.readAttribute(this) ?: return null
+    return data.readHashCode()
 }
