@@ -930,7 +930,7 @@ private class MacroResolver private constructor(private val processor: RsResolve
         val context = expandedFrom ?: element.context ?: return false
 
         if (IS_NEW_RESOLVE_ENABLED && context is RsMod && context.containingCrate !is DoctestCrate) {
-            processRemainedExportedMacros()  // process local imports
+            if (processRemainedExportedMacros()) return true  // process local imports
             return if (processMacros(context, processor)) true else null
         }
         for (e in element.leftSiblings) {
@@ -958,7 +958,7 @@ private class MacroResolver private constructor(private val processor: RsResolve
         val parentPsi = expandedFrom ?: parentStub.psi
 
         if (IS_NEW_RESOLVE_ENABLED && parentPsi is RsMod && parentPsi.containingCrate !is DoctestCrate) {
-            processRemainedExportedMacros()  // process local imports
+            if (processRemainedExportedMacros()) return true  // process local imports
             return if (processMacros(parentPsi, processor)) true else null
         }
         for (it in leftSiblings) {
