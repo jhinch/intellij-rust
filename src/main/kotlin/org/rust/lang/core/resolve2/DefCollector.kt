@@ -23,6 +23,7 @@ import org.rust.lang.core.resolve2.Visibility.Invisible
 import org.rust.openapiext.findFileByMaybeRelativePath
 import org.rust.openapiext.testAssert
 import org.rust.openapiext.toPsiFile
+import org.rust.stdext.HashCode
 import java.io.DataOutputStream
 
 /** Resolves all imports (and adds to [defMap]) using fixed point iteration algorithm */
@@ -275,29 +276,39 @@ class DefCollector(
 
     private fun tryExpandMacroCall(call: MacroCallInfo): Boolean {
         val legacyMacroDef = call.macroDef
-        val macro = if (legacyMacroDef != null) {
-            legacyMacroDef
-        } else {
+        val def = legacyMacroDef ?: run {
             val perNs = defMap.resolvePathFp(call.containingMod, call.path, ResolveMode.OTHER)
-            val macroDef = perNs.resolvedDef.macros ?: return false
-            defMap.defDatabase.getMacroInfo(macroDef)
+            val defItem = perNs.resolvedDef.macros ?: return false
+            defMap.defDatabase.getMacroInfo(defItem)
         }
-        val macroData = RsMacroData(macro.body)
-        val callData = RsMacroCallData(call.body)
+        val defData = RsMacroDataWithHash(RsMacroData(def.body), def.bodyHash)
+        val callData = RsMacroCallDataWithHash(RsMacroCallData(call.body), call.bodyHash)
         val expander = MacroExpander(project)
-        val psiFactory = RsPsiFactory(project)
+        val expanderShared = MacroExpansionShared.getInstance()
         return runReadAction {
-            val (expandedText, ranges) = expander.expandMacroAsText(macroData, callData)
-                ?: return@runReadAction true
-            val expansion = parseExpandedTextWithContext(MacroExpansionContext.ITEM, psiFactory, expandedText)
-                ?: return@runReadAction true
+            data class Tuple4<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
 
-            processDollarCrate(call, macro, expandedText, ranges, expansion)
+            val useExpansionCache = true
+            val (expandedText, expandedFile, expandedItems, ranges) = if (useExpansionCache) {
+                val (expandedFile, ranges) = expanderShared.createExpansionPsi(project, expander, defData, callData)
+                    ?: return@runReadAction true
+                val expandedItems = expandedFile.stubChildrenOfType<RsExpandedElement>()
+                Tuple4(expandedFile.text, expandedFile, expandedItems, ranges)
+            } else {
+                val psiFactory = RsPsiFactory(project)
+                val (expandedText, ranges) = expander.expandMacroAsText(defData.data, callData.data)
+                    ?: return@runReadAction true
+                val expansion = parseExpandedTextWithContext(MacroExpansionContext.ITEM, psiFactory, expandedText)
+                    ?: return@runReadAction true
+                Tuple4(expandedText, expansion.file, expansion.elements, ranges)
+            }
+
+            processDollarCrate(call, def, expandedText, ranges, expandedFile)
 
             // Note: we don't need to call [RsExpandedElement.setContext] for [expansion.elements],
             // because it is needed only for [RsModDeclItem], and we use our own resolve for [RsModDeclItem]
 
-            processExpandedItems(call.containingMod, expansion.elements, call.depth + 1)
+            processExpandedItems(call.containingMod, expandedItems, call.depth + 1)
             true
         }
     }
@@ -317,7 +328,7 @@ class DefCollector(
         macro: MacroInfo,
         expandedText: CharSequence,
         ranges: RangeMap,  // between `call.body` and `expandedText`
-        expansion: MacroExpansion
+        file: RsFile
     ) {
         val occurrencesInFile = Regex(MACRO_DOLLAR_CRATE_IDENTIFIER).findAll(expandedText).map { it.range.first }
         // для каждого occurrence IntellijRustDollarCrate в `expandedText` ищем crateId
@@ -347,9 +358,6 @@ class DefCollector(
                 range.contains(rangeInFile)
             }
 
-        fun findSingleCrateIdForRange(range: TextRange): CratePersistentId? =
-            filterRangesInside(range).values.distinct().singleOrNull()
-
         // нас интересуют три типа RsExpandedElement:
         // - UseItem - если начинается с $crate
         // - MacroCall - если начинается с $crate или если body содержит $crate
@@ -357,20 +365,22 @@ class DefCollector(
         // todo: мб лучше вместо цикла по всем descendantsOfType перебирать rangesInFile и явно искать top level element ?
         //     - для путей внутри RsUseItem и RsMacroCall можно и не искать, просто использовать их userData
         //     - для RsMacroCall body можно делать parentOfType<RsMacroCall>()
-        loop@ for (element in expansion.file.descendantsOfType<RsElement>()) {
+        //  нельзя - потому что findElementBy(offset) работает на psi а не на stubs
+        loop@ for (element in file.stubDescendantsOfTypeStrict<RsElement>()) {
             when (element) {
                 is RsUseItem -> {
                     // expandedText = 'use $crate::foo;'
                     // TODO: `use {$crate::foo, $crate::bar};` - `$crate` may come from different macros
-                    val crateId = findSingleCrateIdForRange(element.textRange) ?: continue@loop
+                    val crateId = element.stubDescendantsOfTypeStrict<RsPath>()
+                        .mapNotNull { rangesInFile[it.stub.startOffset] }
+                        .distinct().singleOrNull()
+                        ?: continue@loop
                     element.putUserData(RESOLVE_DOLLAR_CRATE_ID_KEY, crateId)
                 }
                 is RsMacroCall -> {
                     // expandedText = 'foo! { ... $crate ... }'
                     run {
-                        val macroArgument = element.macroArgumentElement ?: return@run
-                        // `1` for open and closed brackets
-                        val macroRangeInFile = TextRange(macroArgument.startOffset + 1, macroArgument.endOffset - 1)
+                        val macroRangeInFile = element.bodyTextRange ?: return@run
                         val rangesInMacro = filterRangesInside(macroRangeInFile)
                             .map { (indexInFile, crateId) ->
                                 val indexInMacro = indexInFile - macroRangeInFile.startOffset
@@ -381,7 +391,7 @@ class DefCollector(
 
                     // expandedText = '$crate::foo! { ... }'
                     run {
-                        val crateId = findSingleCrateIdForRange(element.path.textRange) ?: return@run
+                        val crateId = rangesInFile[element.path.stub.startOffset] ?: return@run
                         element.path.putUserData(RESOLVE_DOLLAR_CRATE_ID_KEY, crateId)
                     }
                 }
@@ -464,13 +474,15 @@ sealed class PartialResolvedImport {
 class MacroInfo(
     val crate: CratePersistentId,
     val path: ModPath,
-    val body: RsMacroBody
+    val body: RsMacroBody,
+    val bodyHash: HashCode
 )
 
 class MacroCallInfo(
     val containingMod: ModData,
     val path: String,
     val body: String,
+    val bodyHash: HashCode?,  // null for `include!` macro
     val depth: Int,
     val macroDef: MacroInfo?,  // for textual scoped macros
     /**

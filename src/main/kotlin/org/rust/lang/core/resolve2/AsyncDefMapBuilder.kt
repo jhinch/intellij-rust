@@ -6,7 +6,6 @@
 package org.rust.lang.core.resolve2
 
 import com.intellij.openapi.progress.ProgressIndicator
-import com.intellij.openapiext.isUnitTestMode
 import org.rust.lang.core.crate.Crate
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
@@ -35,7 +34,7 @@ class AsyncDefMapBuilder(
             buildImpl()
         }
 
-        if (!isUnitTestMode || wallTime > 2000) {
+        if (true) {
             val totalTime = tasksTimes.values.sum()
             val top5crates = tasksTimes.entries
                 .sortedByDescending { (_, time) -> time }

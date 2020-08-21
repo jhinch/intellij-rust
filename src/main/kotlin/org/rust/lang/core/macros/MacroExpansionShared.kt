@@ -23,7 +23,6 @@ import com.intellij.util.io.KeyDescriptor
 import com.intellij.util.io.PersistentHashMap
 import org.rust.lang.RsLanguage
 import org.rust.lang.core.psi.RsFile
-import org.rust.lang.core.psi.RsFileBase
 import org.rust.lang.core.psi.RsMacro
 import org.rust.lang.core.psi.RsMacroCall
 import org.rust.lang.core.psi.ext.RsMod
@@ -119,7 +118,7 @@ class MacroExpansionShared : Disposable {
         expander: MacroExpander,
         def: RsMacroDataWithHash,
         call: RsMacroCallDataWithHash
-    ): Pair<RsFileBase, RangeMap>? {
+    ): Pair<RsFile, RangeMap>? {
         val hash = HashCode.mix(def.bodyHash ?: return null, call.bodyHash ?: return null)
         val (text, ranges) = cachedExpand(expander, def, call) ?: return null
         val file = ReadOnlyLightVirtualFile("macro.rs", RsLanguage, text).apply {

@@ -56,6 +56,7 @@ fun buildDefMapForAllCrates(
     }
     timesBuildDefMaps += time
     RESOLVE_LOG.info("Created DefMap for all crates in $time milliseconds")
+    if (!async) println("wallTime: $time")
 
     indicator.checkCanceled()
     project.rustPsiManager.incRustStructureModificationCount()

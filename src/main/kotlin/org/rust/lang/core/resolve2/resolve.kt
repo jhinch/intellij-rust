@@ -388,6 +388,7 @@ data class ModPath(
 
     fun writeTo(data: DataOutputStream, withCrate: Boolean) {
         if (withCrate) data.writeInt(crate)
+        // todo writeUTFFast ?
         data.writeUTF(path)
     }
 

@@ -362,12 +362,13 @@ class ModCollector(
         val isEnabledByCfg = modData.isEnabledByCfg && call.isEnabledByCfgSelf(crate)
         if (!isEnabledByCfg) return  // todo
         val body = call.includeMacroArgument?.expr?.value ?: call.macroBody ?: return
+        val bodyHash = call.bodyHash
         val path = call.path.fullPath
         val dollarCrateId = call.path.getUserData(RESOLVE_DOLLAR_CRATE_ID_KEY)  // for `$crate::foo!()`
         val pathAdjusted = adjustPathWithDollarCrate(path, dollarCrateId)
         val macroDef = if (path.contains("::")) null else modData.legacyMacros[path]
         val dollarCrateMap = call.getUserData(RESOLVE_RANGE_MAP_KEY) ?: RangeMap.EMPTY
-        context.macroCalls += MacroCallInfo(modData, pathAdjusted, body, macroDepth, macroDef, dollarCrateMap)
+        context.macroCalls += MacroCallInfo(modData, pathAdjusted, body, bodyHash, macroDepth, macroDef, dollarCrateMap)
     }
 
     private fun collectMacro(macro: RsMacro) {
@@ -376,9 +377,10 @@ class ModCollector(
         val name = macro.name ?: return
         // check(macro.stub != null)  // todo
         val macroBodyStubbed = macro.macroBodyStubbed ?: return
+        val bodyHash = macro.bodyHash ?: return
         val macroPath = modData.path.append(name)
 
-        modData.legacyMacros[name] = MacroInfo(modData.crate, macroPath, macroBodyStubbed)
+        modData.legacyMacros[name] = MacroInfo(modData.crate, macroPath, macroBodyStubbed, bodyHash)
 
         if (macro.hasMacroExport) {
             val visItem = VisItem(macroPath, Visibility.Public)
@@ -455,7 +457,10 @@ private fun RsUseSpeck.getFullPath(): String? {
 private fun adjustPathWithDollarCrate(path: String, dollarCrateId: CratePersistentId?): String {
     if (!path.startsWith(MACRO_DOLLAR_CRATE_IDENTIFIER)) return path
 
-    check(dollarCrateId != null) { "Can't find crate for path starting with \$crate: '$path'" }
+    if (dollarCrateId == null) {
+        RESOLVE_LOG.error("Can't find crate for path starting with \$crate: '$path'")
+        return path
+    }
     return path.replaceFirst(MACRO_DOLLAR_CRATE_IDENTIFIER, "$MACRO_DOLLAR_CRATE_IDENTIFIER::$dollarCrateId")
 }
 
