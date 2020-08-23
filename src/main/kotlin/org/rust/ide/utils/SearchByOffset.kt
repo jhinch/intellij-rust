@@ -11,8 +11,7 @@ import com.intellij.psi.PsiFile
 import com.intellij.psi.PsiWhiteSpace
 import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.psi.util.PsiUtilCore
-import org.rust.lang.core.macros.MacroExpansionContext
-import org.rust.lang.core.macros.MacroExpansionContext.*
+import org.rust.lang.core.macros.MacroExpansionContext.STMT
 import org.rust.lang.core.macros.expansionContext
 import org.rust.lang.core.psi.*
 import org.rust.lang.core.psi.ext.ancestorOrSelf
@@ -161,7 +160,7 @@ fun PsiFile.findElementAtIgnoreWhitespaceAfter(offset: Int): PsiElement? {
 /**
  * Finds child of [parent] of which given element is descendant.
  */
-private fun PsiElement.getTopmostParentInside(parent: PsiElement): PsiElement {
+fun PsiElement.getTopmostParentInside(parent: PsiElement): PsiElement {
     if (parent == this) return this
 
     var element = this
@@ -171,7 +170,7 @@ private fun PsiElement.getTopmostParentInside(parent: PsiElement): PsiElement {
     return element
 }
 
-private fun collectElements(start: PsiElement, stop: PsiElement?, pred: (PsiElement) -> Boolean): Array<out PsiElement> {
+fun collectElements(start: PsiElement, stop: PsiElement?, pred: (PsiElement) -> Boolean): Array<out PsiElement> {
     check(stop == null || start.parent == stop.parent)
 
     val psiSeq = generateSequence(start) {
