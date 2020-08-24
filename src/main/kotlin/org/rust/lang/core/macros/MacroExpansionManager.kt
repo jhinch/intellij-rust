@@ -48,6 +48,7 @@ import org.rust.cargo.project.model.cargoProjects
 import org.rust.cargo.project.settings.RustProjectSettingsService
 import org.rust.cargo.project.settings.rustSettings
 import org.rust.cargo.project.workspace.PackageOrigin
+import org.rust.ide.utils.isEnabledByCfg
 import org.rust.lang.core.psi.*
 import org.rust.lang.core.psi.RsPsiTreeChangeEvent.*
 import org.rust.lang.core.psi.ext.*
@@ -855,8 +856,11 @@ private class MacroExpansionServiceImplInner(
                 val calls = runReadActionInSmartMode(dumbService) {
                     val calls = RsMacroCallIndex.getMacroCalls(project, scope)
                     MACRO_LOG.info("Macros to expand: ${calls.size}")
-                    calls.groupBy { it.containingFile.virtualFile }
-
+                    calls
+                        .groupBy { it.containingFile }
+                        .filterKeys { if (it is RsFile) it.isDeeplyEnabledByCfg else true }
+                        .mapValues { (_, fileCalls) -> fileCalls.filter { it.isEnabledByCfg } }
+                        .mapKeys { (file, _) -> file.virtualFile }
                 }
                 return storage.makeExpansionTask(calls)
             }
