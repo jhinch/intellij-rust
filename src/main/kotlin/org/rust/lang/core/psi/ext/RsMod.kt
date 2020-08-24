@@ -7,6 +7,7 @@ package org.rust.lang.core.psi.ext
 
 import com.intellij.openapi.util.io.FileUtil
 import com.intellij.psi.PsiDirectory
+import com.intellij.util.PathUtil
 import org.rust.lang.RsConstants
 import org.rust.lang.RsFileType
 import org.rust.lang.core.psi.RsFile
@@ -54,7 +55,11 @@ interface RsMod : RsQualifiedNamedElement, RsItemsOwner, RsVisible {
 
         val explicitPath = pathAttribute
         val (parentDirectory, path) = if (explicitPath != null) {
-            contextualFile.originalFile.parent to explicitPath
+            if (this is RsFile) {
+                declaration?.contextualFile?.parent to PathUtil.getParentPath(explicitPath)
+            } else {
+                contextualFile.originalFile.parent to explicitPath
+            }
         } else {
             `super`?.getOwnedDirectory(createIfNotExists) to name
         }

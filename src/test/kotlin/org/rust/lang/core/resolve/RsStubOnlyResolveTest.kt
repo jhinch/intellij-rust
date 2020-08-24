@@ -101,6 +101,19 @@ class RsStubOnlyResolveTest : RsResolveTestBase() {
         pub fn baz() {}
     """, NameResolutionTestmarks.modDeclExplicitPathInNonInlineModule)
 
+    fun `test module path to different directory`() = stubOnlyResolve("""
+    //- main.rs
+        #[path = "src2/foo.rs"]
+        mod foo;
+
+        type T = foo::bar::S;
+                         //^ src2/bar/mod.rs
+    //- src2/foo.rs
+        pub mod bar;
+    //- src2/bar/mod.rs
+        pub struct S;
+    """, NameResolutionTestmarks.modDeclExplicitPathInNonInlineModule)
+
 
     fun `test invalid path`() = stubOnlyResolve("""
     //- main.rs
