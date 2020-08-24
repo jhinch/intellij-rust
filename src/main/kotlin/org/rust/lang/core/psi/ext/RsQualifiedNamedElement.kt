@@ -71,7 +71,7 @@ data class RsQualifiedName private constructor(
     val crateName: String,
     val modSegments: List<String>,
     val parentItem: Item,
-    val childItem: Item?
+    val childItems: List<Item>
 ) {
 
     fun toUrlPath(): String {
@@ -80,7 +80,7 @@ data class RsQualifiedName private constructor(
         val (pageName, anchor) = if (parentItem.type == MOD || parentItem.type == CRATE) {
             "index.html" to ""
         } else {
-            "$parentItem.html" to (if (childItem != null) "#$childItem" else "")
+            "$parentItem.html" to if (childItems.isNotEmpty()) childItems.joinToString(separator = ".", prefix = "#") else ""
         }
         segments += pageName
         return segments.joinToString(separator = "/", postfix = anchor)
@@ -88,7 +88,7 @@ data class RsQualifiedName private constructor(
 
     /** Tries to find rust qualified name element related to this qualified name */
     fun findPsiElement(psiManager: PsiManager, context: RsElement): RsQualifiedNamedElement? {
-        val item = childItem ?: parentItem
+        val item = childItems.lastOrNull() ?: parentItem
 
         // If it's link to crate, try to find the corresponding `lib.rs` file
         if (item.type == CRATE) {
@@ -154,7 +154,7 @@ data class RsQualifiedName private constructor(
         crossinline transform: (T) -> QualifiedNamedItem?
     ): RsQualifiedNamedElement? {
         var result: RsQualifiedNamedElement? = null
-        val item = childItem ?: parentItem
+        val item = childItems.lastOrNull() ?: parentItem
         StubIndex.getInstance().processElements(
             indexKey,
             keyProducer(item.name),
@@ -182,26 +182,26 @@ data class RsQualifiedName private constructor(
             val segments = path.split("/")
             if (segments.size < 2) return null
 
-            val (parentItem, childItem) = if (segments.size == 2 && segments[1] == "index.html") {
-                Item(segments[0], CRATE) to null
+            val (parentItem, childItems) = if (segments.size == 2 && segments[1] == "index.html") {
+                Item(segments[0], CRATE) to emptyList()
             } else {
                 // Last segment contains info about item type and name
                 // and it should have the following structure:
-                // parentItem ( '#' childItem )?
+                // parentItem ( '#' childItem (. childItem)? )?
                 val itemParts = segments.last().split("#")
                 val parentRaw = itemParts[0]
-                val childRaw = itemParts.getOrNull(1)
+                val childrenRaw = itemParts.getOrNull(1)
 
                 val parentItem = parentItem(segments[segments.lastIndex - 1], parentRaw) ?: return null
-                val childItem = if (childRaw != null) {
-                    childItem(childRaw) ?: return null
+                val childItems = if (childrenRaw != null) {
+                    childItems(childrenRaw) ?: return null
                 } else {
-                    null
+                    emptyList()
                 }
-                parentItem to childItem
+                parentItem to childItems
             }
 
-            return RsQualifiedName(segments[0], segments.subList(1, segments.lastIndex), parentItem, childItem)
+            return RsQualifiedName(segments[0], segments.subList(1, segments.lastIndex), parentItem, childItems)
         }
 
         private fun parentItem(prevSegment: String, raw: String): Item? {
@@ -216,22 +216,34 @@ data class RsQualifiedName private constructor(
             return Item(parts[1], type)
         }
 
-        private fun childItem(raw: String): Item? {
+        private fun childItems(raw: String): List<Item>? {
+
+            fun toChildItem(type: String, name: String): Item? {
+                val itemType = ChildItemType.fromString(type) ?: return null
+                return Item(name, itemType)
+            }
+
             val parts = raw.split(".")
-            if (parts.size != 2) return null
-            val type = ChildItemType.fromString(parts[0]) ?: return null
-            return Item(parts[1], type)
+            if (parts.size != 2 && parts.size != 4) return null
+            val result = mutableListOf<Item>()
+
+            result += toChildItem(parts[0], parts[1]) ?: return null
+            if (parts.size == 4) {
+                result += toChildItem(parts[2], parts[3]) ?: return null
+            }
+
+            return result
         }
 
         @JvmStatic
         fun from(element: RsQualifiedNamedElement): RsQualifiedName? {
             val parent = parentItem(element)
 
-            val (parentItem, childItem) = if (parent != null) {
-                parent to (element.toChildItem() ?: return null)
+            val (parentItem, childItems) = if (parent != null) {
+                parent to (element.toChildItems() ?: return null)
             } else {
                 val parentItem = element.toParentItem() ?: return null
-                parentItem to null
+                parentItem to emptyList()
             }
             val crateName = if (parentItem.type == PRIMITIVE) {
                 STD
@@ -250,7 +262,7 @@ data class RsQualifiedName private constructor(
                     .map { it.modName ?: return null }
             }
 
-            return RsQualifiedName(crateName, modSegments, parentItem, childItem)
+            return RsQualifiedName(crateName, modSegments, parentItem, childItems)
         }
 
         @JvmStatic
@@ -276,17 +288,17 @@ data class RsQualifiedName private constructor(
         @JvmStatic
         fun from(path: RsPath): RsQualifiedName? {
             val primitiveType = TyPrimitive.fromPath(path) ?: return null
-            return RsQualifiedName(STD, emptyList(), Item.primitive(primitiveType.name), null)
+            return RsQualifiedName(STD, emptyList(), Item.primitive(primitiveType.name), emptyList())
         }
 
-        private fun RsQualifiedNamedElement.toItems(): Pair<Item, Item?>? {
+        private fun RsQualifiedNamedElement.toItems(): Pair<Item, List<Item>>? {
             val parent = parentItem(this)
 
             return if (parent != null) {
-                parent to (toChildItem() ?: return null)
+                parent to (toChildItems() ?: return null)
             } else {
                 val parentItem = toParentItem() ?: return null
-                parentItem to null
+                parentItem to emptyList()
             }
         }
 
@@ -302,7 +314,10 @@ data class RsQualifiedName private constructor(
                     }
                 }
                 is RsEnumVariant -> element.parentEnum
-                is RsNamedFieldDecl -> element.parentStruct
+                is RsNamedFieldDecl -> {
+                    val parentStruct = element.parentStruct
+                    (parentStruct as? RsEnumVariant)?.parentEnum ?: parentStruct
+                }
                 else -> return null
             }
             return parentItem?.toParentItem()
@@ -359,17 +374,29 @@ data class RsQualifiedName private constructor(
             return Item(name, itemType, this)
         }
 
-        private fun RsQualifiedNamedElement.toChildItem(): Item? {
+        private fun RsQualifiedNamedElement.toChildItems(): List<Item>? {
             val name = name ?: return null
+            val result = mutableListOf<Item>()
             val type = when (this) {
                 is RsEnumVariant -> VARIANT
-                is RsNamedFieldDecl -> if (parentStruct != null) STRUCTFIELD else return null
+                is RsNamedFieldDecl -> {
+                    val parentStruct = parentStruct ?: return null
+                    if (parentStruct is RsEnumVariant) {
+                        val variantName = parentStruct.name ?: return null
+                        result += Item(variantName, VARIANT, parentStruct)
+                        FIELD
+                    } else {
+                        STRUCTFIELD
+                    }
+
+                }
                 is RsTypeAlias -> ASSOCIATEDTYPE
                 is RsConstant -> ASSOCIATEDCONSTANT
                 is RsFunction -> if (isAbstract) TYMETHOD else METHOD
                 else -> return null
             }
-            return Item(name, type, this)
+            result += Item(name, type, this)
+            return result
         }
     }
 
@@ -441,6 +468,7 @@ data class RsQualifiedName private constructor(
 
     enum class ChildItemType : ItemType {
         VARIANT,
+        FIELD,
         STRUCTFIELD,
         ASSOCIATEDTYPE,
         ASSOCIATEDCONSTANT,
@@ -453,6 +481,7 @@ data class RsQualifiedName private constructor(
             fun fromString(name: String): ChildItemType? {
                 return when (name) {
                     "variant" -> VARIANT
+                    "field" -> FIELD
                     "structfield" -> STRUCTFIELD
                     "associatedtype" -> ASSOCIATEDTYPE
                     "associatedconstant" -> ASSOCIATEDCONSTANT
